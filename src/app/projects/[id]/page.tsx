@@ -29,7 +29,10 @@ function renderFormattedText(text: string) {
     const headerMatch = clean.match(/^(?:#{1,3}\s+)?(\d+)\.\s+(.+)$/);
     if (headerMatch) {
       elements.push(
-        <div key={i} className="mt-3 mb-1.5 font-semibold text-slate-900 text-sm">
+        <div
+          key={i}
+          className="mt-3 mb-1.5 font-semibold text-slate-900 text-sm"
+        >
           {headerMatch[1]}. {headerMatch[2]}
         </div>
       );
@@ -38,7 +41,10 @@ function renderFormattedText(text: string) {
     const mdMatch = clean.match(/^#{1,3}\s+(.+)$/);
     if (mdMatch) {
       elements.push(
-        <div key={i} className="mt-3 mb-1.5 font-semibold text-slate-900 text-sm">
+        <div
+          key={i}
+          className="mt-3 mb-1.5 font-semibold text-slate-900 text-sm"
+        >
           {mdMatch[1]}
         </div>
       );
@@ -76,7 +82,7 @@ function renderFormattedText(text: string) {
 }
 
 function getItemId(item: ProjectItem): string {
-  return item.type === "call" ? item.data.id : item.data.id;
+  return item.data.id;
 }
 
 export default function ProjectDetailPage() {
@@ -138,12 +144,22 @@ export default function ProjectDetailPage() {
   }, [projectId, supabase]);
 
   const loadCalls = useCallback(async () => {
-    const { data } = await supabase
+    // Try sort_order first, fall back to call_date if column doesn't exist
+    let result = await supabase
       .from("expert_calls")
       .select("*")
       .eq("project_id", projectId)
       .order("sort_order", { ascending: true });
-    if (data) setCalls(data);
+
+    if (result.error) {
+      result = await supabase
+        .from("expert_calls")
+        .select("*")
+        .eq("project_id", projectId)
+        .order("call_date", { ascending: false });
+    }
+
+    if (result.data) setCalls(result.data);
     setLoading(false);
   }, [projectId, supabase]);
 
@@ -162,7 +178,9 @@ export default function ProjectDetailPage() {
       ...calls.map((c) => ({ type: "call" as const, data: c })),
       ...dividers.map((d) => ({ type: "divider" as const, data: d })),
     ];
-    merged.sort((a, b) => a.data.sort_order - b.data.sort_order);
+    merged.sort(
+      (a, b) => (a.data.sort_order ?? 0) - (b.data.sort_order ?? 0)
+    );
     setItems(merged);
   }, [calls, dividers]);
 
@@ -178,10 +196,6 @@ export default function ProjectDetailPage() {
     if (!expertName.trim() || !rawNotes.trim()) return;
     setSubmitting(true);
 
-    const maxOrder = items.length > 0
-      ? Math.max(...items.map((it) => it.data.sort_order)) + 1
-      : 0;
-
     const { data: newCall, error } = await supabase
       .from("expert_calls")
       .insert({
@@ -190,12 +204,12 @@ export default function ProjectDetailPage() {
         call_date: callDate,
         raw_notes: rawNotes,
         transcript: transcript || null,
-        sort_order: maxOrder,
       })
       .select()
       .single();
 
     if (error || !newCall) {
+      console.error("Failed to save call:", error);
       setSubmitting(false);
       return;
     }
@@ -209,7 +223,6 @@ export default function ProjectDetailPage() {
     setCallDate(new Date().toISOString().split("T")[0]);
     setRawNotes("");
     setTranscript("");
-    setPrompt(DEFAULT_PROMPT);
     setShowForm(false);
     setSubmitting(false);
     loadCalls();
@@ -319,7 +332,10 @@ export default function ProjectDetailPage() {
       const response = await fetch("/api/export-pdf", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectName: project!.name, calls: orderedCalls }),
+        body: JSON.stringify({
+          projectName: project!.name,
+          calls: orderedCalls,
+        }),
       });
       if (response.ok) {
         const html = await response.text();
@@ -357,8 +373,12 @@ export default function ProjectDetailPage() {
     if (!draggedItemId || draggedItemId === targetId) return;
 
     const newItems = [...items];
-    const dragIdx = newItems.findIndex((it) => getItemId(it) === draggedItemId);
-    const targetIdx = newItems.findIndex((it) => getItemId(it) === targetId);
+    const dragIdx = newItems.findIndex(
+      (it) => getItemId(it) === draggedItemId
+    );
+    const targetIdx = newItems.findIndex(
+      (it) => getItemId(it) === targetId
+    );
     if (dragIdx === -1 || targetIdx === -1) return;
 
     const [removed] = newItems.splice(dragIdx, 1);
@@ -391,14 +411,19 @@ export default function ProjectDetailPage() {
 
   // ---- Dividers ----
   async function handleAddDivider() {
-    const maxOrder = items.length > 0
-      ? Math.max(...items.map((it) => it.data.sort_order)) + 1
-      : 0;
-    await supabase.from("section_dividers").insert({
+    const label = newDividerLabel.trim() || "Section Divider";
+    const { error } = await supabase.from("section_dividers").insert({
       project_id: projectId,
-      label: newDividerLabel.trim() || "Section Divider",
-      sort_order: maxOrder,
+      label,
+      sort_order: items.length,
     });
+    if (error) {
+      console.error("Failed to add divider:", error);
+      alert(
+        "Could not add divider. Please run migration-v2.sql in your Supabase SQL Editor first."
+      );
+      return;
+    }
     setNewDividerLabel("");
     loadDividers();
   }
@@ -458,15 +483,11 @@ export default function ProjectDetailPage() {
               Projects
             </Link>
             <span className="text-slate-600">/</span>
-            <h1 className="text-sm font-semibold text-white">{project.name}</h1>
+            <h1 className="text-sm font-semibold text-white">
+              {project.name}
+            </h1>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowPreview(!showPreview)}
-              className="px-3 py-1.5 bg-slate-700 text-slate-200 rounded-md hover:bg-slate-600 text-xs font-medium transition-colors"
-            >
-              {showPreview ? "Hide Preview" : "Preview Document"}
-            </button>
             <button
               onClick={handleExportDocx}
               disabled={exportingDocx || formattedCallCount === 0}
@@ -498,6 +519,20 @@ export default function ProjectDetailPage() {
           </div>
         </div>
 
+        {/* Preview Document button - in main content area */}
+        <button
+          onClick={() => setShowPreview(!showPreview)}
+          className={`mb-5 px-4 py-2 rounded-lg text-sm font-medium transition-colors w-full text-left ${
+            showPreview
+              ? "bg-blue-700 text-white hover:bg-blue-800"
+              : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-blue-300"
+          }`}
+        >
+          {showPreview
+            ? "Hide Document Preview"
+            : "Preview Document (see how your exported report will look)"}
+        </button>
+
         {/* Document Preview */}
         {showPreview && (
           <div className="bg-white rounded-lg border border-slate-200 p-8 mb-5 preview-doc">
@@ -524,7 +559,11 @@ export default function ProjectDetailPage() {
             </h2>
             <div className="mb-6">
               {items
-                .filter((it) => it.type === "call" && (it.data as ExpertCall).formatted_output)
+                .filter(
+                  (it) =>
+                    it.type === "call" &&
+                    (it.data as ExpertCall).formatted_output
+                )
                 .map((it, idx) => {
                   const call = it.data as ExpertCall;
                   return (
@@ -533,7 +572,10 @@ export default function ProjectDetailPage() {
                       className="flex justify-between items-baseline py-1.5 border-b border-slate-100 text-sm"
                     >
                       <span className="text-slate-800">
-                        {idx + 1}. <span className="font-medium">{call.expert_name}</span>
+                        {idx + 1}.{" "}
+                        <span className="font-medium">
+                          {call.expert_name}
+                        </span>
                       </span>
                       <span className="text-slate-400 text-xs">
                         {formatDate(call.call_date)}
@@ -663,6 +705,20 @@ export default function ProjectDetailPage() {
                   placeholder="Paste transcript if available..."
                 />
               </div>
+
+              {/* Formatting prompt - editable before saving */}
+              <details>
+                <summary className="cursor-pointer text-xs text-blue-700 hover:text-blue-800 font-medium">
+                  Formatting Prompt (edit before formatting)
+                </summary>
+                <textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  rows={10}
+                  className="w-full mt-2 px-3 py-2 border border-slate-200 rounded-lg font-mono text-xs"
+                />
+              </details>
+
               <div className="flex items-center gap-2 pt-1">
                 <button
                   type="submit"
@@ -687,7 +743,9 @@ export default function ProjectDetailPage() {
         {items.length === 0 && !showForm ? (
           <div className="text-center py-16 text-slate-400">
             <p className="text-sm mb-1">No expert calls yet</p>
-            <p className="text-xs">Add your first expert call to get started.</p>
+            <p className="text-xs">
+              Add your first expert call to get started.
+            </p>
           </div>
         ) : (
           <div className="space-y-2">
@@ -891,7 +949,7 @@ export default function ProjectDetailPage() {
                       </p>
 
                       {/* Actions */}
-                      <div className="flex items-center gap-2 pt-2 border-t border-slate-100 ml-6">
+                      <div className="flex items-center gap-2 pt-2 border-t border-slate-100 ml-6 flex-wrap">
                         <button
                           onClick={() => startEditing(call)}
                           className="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-md hover:bg-slate-200 text-xs font-medium transition-colors"
@@ -900,28 +958,15 @@ export default function ProjectDetailPage() {
                         </button>
 
                         {!call.formatted_output && (
-                          <>
-                            <details className="flex-1">
-                              <summary className="cursor-pointer text-xs text-blue-700 hover:text-blue-800 font-medium">
-                                Formatting Prompt
-                              </summary>
-                              <textarea
-                                value={prompt}
-                                onChange={(e) => setPrompt(e.target.value)}
-                                rows={8}
-                                className="w-full mt-2 px-3 py-2 border border-slate-200 rounded-lg font-mono text-xs"
-                              />
-                            </details>
-                            <button
-                              onClick={() => handleFormat(call.id)}
-                              disabled={formatting === call.id}
-                              className="px-3 py-1.5 bg-blue-700 text-white rounded-md hover:bg-blue-800 disabled:opacity-50 text-xs font-medium transition-colors whitespace-nowrap"
-                            >
-                              {formatting === call.id
-                                ? "Formatting..."
-                                : "Format with Claude"}
-                            </button>
-                          </>
+                          <button
+                            onClick={() => handleFormat(call.id)}
+                            disabled={formatting === call.id}
+                            className="px-3 py-1.5 bg-blue-700 text-white rounded-md hover:bg-blue-800 disabled:opacity-50 text-xs font-medium transition-colors whitespace-nowrap"
+                          >
+                            {formatting === call.id
+                              ? "Formatting..."
+                              : "Format with Claude"}
+                          </button>
                         )}
 
                         {call.formatted_output && (
@@ -938,17 +983,6 @@ export default function ProjectDetailPage() {
                                 ? "Hide Output"
                                 : "View Output"}
                             </button>
-                            <details className="flex-1">
-                              <summary className="cursor-pointer text-xs text-blue-700 hover:text-blue-800 font-medium">
-                                Formatting Prompt
-                              </summary>
-                              <textarea
-                                value={prompt}
-                                onChange={(e) => setPrompt(e.target.value)}
-                                rows={8}
-                                className="w-full mt-2 px-3 py-2 border border-slate-200 rounded-lg font-mono text-xs"
-                              />
-                            </details>
                             <button
                               onClick={() => handleFormat(call.id)}
                               disabled={formatting === call.id}
@@ -969,12 +1003,28 @@ export default function ProjectDetailPage() {
                         </button>
                       </div>
 
+                      {/* Formatting prompt (below actions) */}
+                      <div className="ml-6 mt-2">
+                        <details>
+                          <summary className="cursor-pointer text-xs text-blue-700 hover:text-blue-800 font-medium">
+                            Formatting Prompt
+                          </summary>
+                          <textarea
+                            value={prompt}
+                            onChange={(e) => setPrompt(e.target.value)}
+                            rows={8}
+                            className="w-full mt-2 px-3 py-2 border border-slate-200 rounded-lg font-mono text-xs"
+                          />
+                        </details>
+                      </div>
+
                       {/* Formatted output view */}
-                      {viewingCall?.id === call.id && call.formatted_output && (
-                        <div className="mt-3 p-4 bg-slate-50 rounded-lg border border-slate-100 ml-6">
-                          {renderFormattedText(call.formatted_output)}
-                        </div>
-                      )}
+                      {viewingCall?.id === call.id &&
+                        call.formatted_output && (
+                          <div className="mt-3 p-4 bg-slate-50 rounded-lg border border-slate-100 ml-6">
+                            {renderFormattedText(call.formatted_output)}
+                          </div>
+                        )}
                     </div>
                   )}
                 </div>

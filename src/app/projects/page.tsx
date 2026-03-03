@@ -12,9 +12,16 @@ export default function ProjectsPage() {
   const [creating, setCreating] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
+  // Editable app name
+  const [appName, setAppName] = useState("Tech Team - Notes Library");
+  const [editingAppName, setEditingAppName] = useState(false);
+  const [tempAppName, setTempAppName] = useState("");
+
   const supabase = createClient();
 
   useEffect(() => {
+    const saved = localStorage.getItem("appName");
+    if (saved) setAppName(saved);
     loadProjects();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -47,14 +54,30 @@ export default function ProjectsPage() {
     setCreating(false);
   }
 
-  async function togglePin(e: React.MouseEvent, projectId: string, currentlyPinned: boolean) {
+  async function togglePin(
+    e: React.MouseEvent,
+    projectId: string,
+    currentlyPinned: boolean
+  ) {
     e.preventDefault();
     e.stopPropagation();
-    await supabase
+    const { error } = await supabase
       .from("projects")
       .update({ is_pinned: !currentlyPinned })
       .eq("id", projectId);
-    loadProjects();
+    if (!error) loadProjects();
+  }
+
+  function startEditingAppName() {
+    setTempAppName(appName);
+    setEditingAppName(true);
+  }
+
+  function saveAppName() {
+    const name = tempAppName.trim() || "Tech Team - Notes Library";
+    setAppName(name);
+    localStorage.setItem("appName", name);
+    setEditingAppName(false);
   }
 
   function formatDate(dateStr: string) {
@@ -67,24 +90,59 @@ export default function ProjectsPage() {
     });
   }
 
-  // Filter by search then sort: pinned first, then by updated_at
   const filteredProjects = projects
     .filter((p) =>
       p.name.toLowerCase().includes(searchQuery.toLowerCase())
     )
     .sort((a, b) => {
-      if (a.is_pinned && !b.is_pinned) return -1;
-      if (!a.is_pinned && b.is_pinned) return 1;
-      return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+      const aPinned = a.is_pinned ?? false;
+      const bPinned = b.is_pinned ?? false;
+      if (aPinned && !bPinned) return -1;
+      if (!aPinned && bPinned) return 1;
+      return (
+        new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+      );
     });
 
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="bg-slate-900 border-b border-slate-700">
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
-          <h1 className="text-lg font-semibold text-white tracking-tight">
-            PE Diligence Notes
-          </h1>
+          {editingAppName ? (
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={tempAppName}
+                onChange={(e) => setTempAppName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveAppName();
+                  if (e.key === "Escape") setEditingAppName(false);
+                }}
+                autoFocus
+                className="px-3 py-1 bg-slate-800 border border-slate-600 rounded-md text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                onClick={saveAppName}
+                className="px-2 py-1 text-xs bg-blue-700 text-white rounded-md hover:bg-blue-800"
+              >
+                Save
+              </button>
+              <button
+                onClick={() => setEditingAppName(false)}
+                className="px-2 py-1 text-xs text-slate-400 hover:text-slate-200"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <h1
+              onClick={startEditingAppName}
+              className="text-lg font-semibold text-white tracking-tight cursor-pointer hover:text-slate-300 transition-colors"
+              title="Click to rename"
+            >
+              {appName}
+            </h1>
+          )}
         </div>
       </header>
 
@@ -130,7 +188,9 @@ export default function ProjectsPage() {
         ) : filteredProjects.length === 0 ? (
           <div className="text-center py-16 text-slate-500">
             {searchQuery ? (
-              <p className="text-sm">No projects match &ldquo;{searchQuery}&rdquo;</p>
+              <p className="text-sm">
+                No projects match &ldquo;{searchQuery}&rdquo;
+              </p>
             ) : (
               <>
                 <p className="text-base mb-2">No projects yet</p>
@@ -146,30 +206,38 @@ export default function ProjectsPage() {
               <Link
                 key={project.id}
                 href={`/projects/${project.id}`}
-                className="block bg-white rounded-lg border border-slate-200 p-4 hover:border-blue-300 hover:shadow-sm transition-all group"
+                className={`block bg-white rounded-lg border p-4 hover:shadow-sm transition-all group ${
+                  project.is_pinned
+                    ? "border-blue-200 border-l-4 border-l-blue-500"
+                    : "border-slate-200 hover:border-blue-300"
+                }`}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <button
-                      onClick={(e) => togglePin(e, project.id, project.is_pinned)}
-                      className={`text-lg transition-colors ${
-                        project.is_pinned
-                          ? "text-blue-600"
-                          : "text-slate-300 hover:text-slate-400"
-                      }`}
-                      title={project.is_pinned ? "Unpin project" : "Pin project"}
-                    >
-                      {project.is_pinned ? "\u{1F4CC}" : "\u{1F4CC}"}
-                    </button>
                     <h3 className="text-sm font-medium text-slate-900">
                       {project.name}
                     </h3>
+                    {project.is_pinned && (
+                      <span className="text-xs text-blue-600 font-medium">
+                        Pinned
+                      </span>
+                    )}
                   </div>
-                  <span className="text-xs text-slate-400">
-                    Updated {formatDate(project.updated_at)}
-                  </span>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={(e) =>
+                        togglePin(e, project.id, project.is_pinned ?? false)
+                      }
+                      className="text-xs font-medium px-2.5 py-1 rounded transition-colors bg-slate-100 text-slate-500 hover:bg-slate-200 opacity-0 group-hover:opacity-100"
+                    >
+                      {project.is_pinned ? "Unpin" : "Pin"}
+                    </button>
+                    <span className="text-xs text-slate-400">
+                      Updated {formatDate(project.updated_at)}
+                    </span>
+                  </div>
                 </div>
-                <p className="text-xs text-slate-400 mt-1 ml-8">
+                <p className="text-xs text-slate-400 mt-1">
                   Created {formatDate(project.created_at)}
                 </p>
               </Link>
