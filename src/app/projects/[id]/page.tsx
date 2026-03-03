@@ -326,8 +326,12 @@ export default function ProjectDetailPage() {
         exportSubtitle || undefined
       );
       const { saveAs } = await import("file-saver");
-      const fileName = (exportTitle || project!.name).replace(/\s+/g, "_");
-      saveAs(blob, `${fileName}_Diligence.docx`);
+      const now = new Date();
+      const datePrefix = `${now.getFullYear()}.${String(now.getMonth() + 1).padStart(2, "0")}.${String(now.getDate()).padStart(2, "0")}`;
+      const docTitle = exportTitle || project!.name;
+      const docSubtitle = exportSubtitle || "Expert Call Diligence Report";
+      const fileName = `${datePrefix} - ${docTitle} - ${docSubtitle}`.replace(/[/\\?%*:|"<>]/g, "");
+      saveAs(blob, `${fileName}.docx`);
     } catch (err) {
       console.error("DOCX export failed:", err);
     }
@@ -356,8 +360,12 @@ export default function ProjectDetailPage() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        const fileName = (exportTitle || project!.name).replace(/\s+/g, "_");
-        a.download = `${fileName}_Diligence.pdf`;
+        const now = new Date();
+        const datePrefix = `${now.getFullYear()}.${String(now.getMonth() + 1).padStart(2, "0")}.${String(now.getDate()).padStart(2, "0")}`;
+        const docTitle = exportTitle || project!.name;
+        const docSubtitle = exportSubtitle || "Expert Call Diligence Report";
+        const fileName = `${datePrefix} - ${docTitle} - ${docSubtitle}`.replace(/[/\\?%*:|"<>]/g, "");
+        a.download = `${fileName}.pdf`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -699,44 +707,92 @@ export default function ProjectDetailPage() {
                   marginBottom: 20,
                 }}
               />
-              {items
-                .filter(
-                  (it) =>
-                    it.type === "call" &&
-                    (it.data as ExpertCall).formatted_output
-                )
-                .map((it, idx) => {
-                  const call = it.data as ExpertCall;
-                  return (
-                    <div
-                      key={call.id}
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "baseline",
-                        padding: "8px 0",
-                        borderBottom: "1px solid #eef1f5",
-                        fontSize: 13,
-                      }}
-                    >
-                      <span style={{ color: "#0f172a" }}>
-                        {idx + 1}.{" "}
-                        <span style={{ fontWeight: 500 }}>
-                          {call.expert_name}
-                        </span>
-                      </span>
-                      <span
+              {(() => {
+                let callCounter = 0;
+                return items
+                  .filter(
+                    (it) =>
+                      it.type === "divider" ||
+                      (it.type === "call" &&
+                        (it.data as ExpertCall).formatted_output)
+                  )
+                  .map((it) => {
+                    if (it.type === "divider") {
+                      const div = it.data as SectionDivider;
+                      return (
+                        <div
+                          key={div.id}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 10,
+                            padding: "10px 0 4px 0",
+                            marginTop: 8,
+                          }}
+                        >
+                          <div
+                            style={{ flex: 1, borderTop: "1px solid #cbd5e1" }}
+                          />
+                          <span
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 700,
+                              color: "#475569",
+                              textTransform: "uppercase",
+                              letterSpacing: "0.08em",
+                            }}
+                          >
+                            {div.label}
+                          </span>
+                          <div
+                            style={{ flex: 1, borderTop: "1px solid #cbd5e1" }}
+                          />
+                        </div>
+                      );
+                    }
+                    const call = it.data as ExpertCall;
+                    callCounter++;
+                    // Check if under a divider for indentation
+                    const idx = items.indexOf(it);
+                    let indented = false;
+                    for (let i = idx - 1; i >= 0; i--) {
+                      if (items[i].type === "divider") {
+                        indented = true;
+                        break;
+                      }
+                    }
+                    return (
+                      <div
+                        key={call.id}
                         style={{
-                          fontSize: 11,
-                          color: "#94a3b8",
-                          marginLeft: 16,
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "baseline",
+                          padding: "8px 0",
+                          paddingLeft: indented ? 20 : 0,
+                          borderBottom: "1px solid #eef1f5",
+                          fontSize: 13,
                         }}
                       >
-                        {formatDate(call.call_date)}
-                      </span>
-                    </div>
-                  );
-                })}
+                        <span style={{ color: "#0f172a" }}>
+                          {callCounter}.{" "}
+                          <span style={{ fontWeight: 500 }}>
+                            {call.expert_name}
+                          </span>
+                        </span>
+                        <span
+                          style={{
+                            fontSize: 11,
+                            color: "#94a3b8",
+                            marginLeft: 16,
+                          }}
+                        >
+                          {formatDate(call.call_date)}
+                        </span>
+                      </div>
+                    );
+                  });
+              })()}
             </div>
 
             {/* Call pages */}
@@ -953,6 +1009,15 @@ export default function ProjectDetailPage() {
             {items.map((item) => {
               const itemId = getItemId(item);
 
+              // Check if this call sits under a divider (for indentation)
+              const isUnderDivider = (() => {
+                const idx = items.indexOf(item);
+                for (let i = idx - 1; i >= 0; i--) {
+                  if (items[i].type === "divider") return true;
+                }
+                return false;
+              })();
+
               // ---- Divider ----
               if (item.type === "divider") {
                 const div = item.data as SectionDivider;
@@ -965,14 +1030,14 @@ export default function ProjectDetailPage() {
                     onDragLeave={handleDragLeave}
                     onDrop={(e) => handleDrop(e, div.id)}
                     onDragEnd={handleDragEnd}
-                    className={`flex items-center gap-3 py-2 px-3 rounded-lg border border-transparent hover:border-slate-200 group transition-all ${
+                    className={`flex items-center gap-3 py-2.5 px-4 rounded-lg border border-slate-200 bg-slate-50 group transition-all mt-4 first:mt-0 ${
                       draggedItemId === div.id ? "opacity-40" : ""
                     }`}
                   >
-                    <span className="drag-handle text-slate-300 group-hover:text-slate-400 text-sm select-none">
+                    <span className="drag-handle text-slate-400 group-hover:text-slate-500 text-sm select-none">
                       &#x2630;
                     </span>
-                    <div className="flex-1 border-t border-slate-300" />
+                    <div className="flex-1 border-t-2 border-slate-300" />
                     {editingDividerId === div.id ? (
                       <input
                         type="text"
@@ -986,7 +1051,7 @@ export default function ProjectDetailPage() {
                             setEditingDividerId(null);
                         }}
                         autoFocus
-                        className="text-xs font-medium text-slate-600 bg-white border border-slate-300 rounded px-2 py-0.5 text-center w-40"
+                        className="text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded px-2 py-0.5 text-center w-40"
                       />
                     ) : (
                       <span
@@ -994,13 +1059,13 @@ export default function ProjectDetailPage() {
                           setEditingDividerId(div.id);
                           setEditDividerLabel(div.label);
                         }}
-                        className="text-xs font-medium text-slate-400 uppercase tracking-wide whitespace-nowrap cursor-pointer hover:text-slate-600"
+                        className="text-xs font-semibold text-slate-600 uppercase tracking-widest whitespace-nowrap cursor-pointer hover:text-slate-800"
                         title="Click to rename"
                       >
                         {div.label}
                       </span>
                     )}
-                    <div className="flex-1 border-t border-slate-300" />
+                    <div className="flex-1 border-t-2 border-slate-300" />
                     <button
                       onClick={() => handleDeleteDivider(div.id)}
                       className="text-slate-300 hover:text-red-500 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
@@ -1027,6 +1092,7 @@ export default function ProjectDetailPage() {
                   className={`bg-white rounded-lg border border-slate-200 transition-all ${
                     draggedItemId === itemId ? "opacity-40" : ""
                   }`}
+                  style={isUnderDivider ? { marginLeft: 24 } : undefined}
                 >
                   {isEditing ? (
                     /* ---- EDIT MODE ---- */

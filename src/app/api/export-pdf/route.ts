@@ -359,7 +359,11 @@ export async function POST(request: Request) {
     return new Response(pdfBuffer as unknown as BodyInit, {
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="${title.replace(/\s+/g, "_")}_Diligence.pdf"`,
+        "Content-Disposition": `attachment; filename="${(() => {
+          const now = new Date();
+          const d = `${now.getFullYear()}.${String(now.getMonth() + 1).padStart(2, "0")}.${String(now.getDate()).padStart(2, "0")}`;
+          return `${d} - ${title} - ${subtitle}`.replace(/[/\\?%*:|"<>]/g, "");
+        })()}.pdf"`,
       },
     });
   } catch (error) {
