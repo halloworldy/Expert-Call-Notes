@@ -131,6 +131,12 @@ export default function ProjectDetailPage() {
 
   // Divider
   const [newDividerLabel, setNewDividerLabel] = useState("");
+  const [editingDividerId, setEditingDividerId] = useState<string | null>(null);
+  const [editDividerLabel, setEditDividerLabel] = useState("");
+
+  // Export settings
+  const [exportTitle, setExportTitle] = useState("");
+  const [exportSubtitle, setExportSubtitle] = useState("");
 
   const supabase = createClient();
 
@@ -313,9 +319,15 @@ export default function ProjectDetailPage() {
         .filter((it) => it.type === "call")
         .map((it) => it.data as ExpertCall);
       const { generateDocx } = await import("@/lib/docx-generator");
-      const blob = await generateDocx(project!, orderedCalls);
+      const blob = await generateDocx(
+        project!,
+        orderedCalls,
+        exportTitle || undefined,
+        exportSubtitle || undefined
+      );
       const { saveAs } = await import("file-saver");
-      saveAs(blob, `${project!.name.replace(/\s+/g, "_")}_Diligence.docx`);
+      const fileName = (exportTitle || project!.name).replace(/\s+/g, "_");
+      saveAs(blob, `${fileName}_Diligence.docx`);
     } catch (err) {
       console.error("DOCX export failed:", err);
     }
@@ -335,6 +347,8 @@ export default function ProjectDetailPage() {
         body: JSON.stringify({
           projectName: project!.name,
           calls: orderedCalls,
+          exportTitle: exportTitle || undefined,
+          exportSubtitle: exportSubtitle || undefined,
         }),
       });
       if (response.ok) {
@@ -342,7 +356,8 @@ export default function ProjectDetailPage() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `${project!.name.replace(/\s+/g, "_")}_Diligence.pdf`;
+        const fileName = (exportTitle || project!.name).replace(/\s+/g, "_");
+        a.download = `${fileName}_Diligence.pdf`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -435,6 +450,20 @@ export default function ProjectDetailPage() {
     loadDividers();
   }
 
+  async function handleSaveDividerLabel(dividerId: string) {
+    const label = editDividerLabel.trim();
+    if (!label) {
+      setEditingDividerId(null);
+      return;
+    }
+    await supabase
+      .from("section_dividers")
+      .update({ label })
+      .eq("id", dividerId);
+    setEditingDividerId(null);
+    loadDividers();
+  }
+
   // ---- Helpers ----
   function formatDate(dateStr: string) {
     return new Date(dateStr).toLocaleDateString("en-US", {
@@ -521,6 +550,45 @@ export default function ProjectDetailPage() {
           </div>
         </div>
 
+        {/* Export settings */}
+        <details className="bg-white rounded-lg border border-slate-200 mb-5">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-slate-700 hover:text-slate-900">
+            Export Settings (customise document title and subtitle)
+          </summary>
+          <div className="px-4 pb-4 space-y-3 border-t border-slate-100 pt-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">
+                Document Title
+              </label>
+              <input
+                type="text"
+                value={exportTitle}
+                onChange={(e) => setExportTitle(e.target.value)}
+                placeholder={project.name}
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="text-xs text-slate-400 mt-1">
+                Leave blank to use the project name
+              </p>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">
+                Document Subtitle
+              </label>
+              <input
+                type="text"
+                value={exportSubtitle}
+                onChange={(e) => setExportSubtitle(e.target.value)}
+                placeholder="Expert Call Diligence Report"
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="text-xs text-slate-400 mt-1">
+                Leave blank for default subtitle
+              </p>
+            </div>
+          </div>
+        </details>
+
         {/* Preview Document button - in main content area */}
         <button
           onClick={() => setShowPreview(!showPreview)}
@@ -538,12 +606,13 @@ export default function ProjectDetailPage() {
         {/* Document Preview */}
         {showPreview && (
           <div className="bg-white rounded-lg border border-slate-200 p-8 mb-5 preview-doc">
-            <div className="text-center mb-8">
+            {/* Title Page */}
+            <div className="text-center mb-8 py-12 border-2 border-dashed border-slate-200 rounded-lg bg-slate-50/50">
               <h1 className="text-2xl font-bold text-slate-900 border-0 pb-0 mb-2">
-                {project.name}
+                {exportTitle || project.name}
               </h1>
               <p className="text-slate-500 text-sm">
-                Expert Call Diligence Report
+                {exportSubtitle || "Expert Call Diligence Report"}
               </p>
               <p className="text-slate-400 text-xs mt-1">
                 {new Date().toLocaleDateString("en-US", {
@@ -554,40 +623,42 @@ export default function ProjectDetailPage() {
               </p>
             </div>
 
-            <hr className="my-6 border-slate-200" />
+            {/* Page break indicator */}
+            <div className="page-break-indicator" />
 
-            <h2 className="font-semibold text-slate-900 mb-3 text-base">
-              Table of Contents
-            </h2>
-            <div className="mb-6">
-              {items
-                .filter(
-                  (it) =>
-                    it.type === "call" &&
-                    (it.data as ExpertCall).formatted_output
-                )
-                .map((it, idx) => {
-                  const call = it.data as ExpertCall;
-                  return (
-                    <div
-                      key={call.id}
-                      className="flex justify-between items-baseline py-1.5 border-b border-slate-100 text-sm"
-                    >
-                      <span className="text-slate-800">
-                        {idx + 1}.{" "}
-                        <span className="font-medium">
-                          {call.expert_name}
+            {/* Table of Contents Page */}
+            <div className="border-2 border-dashed border-slate-200 rounded-lg bg-slate-50/50 p-6 mb-0">
+              <h2 className="font-semibold text-slate-900 mb-3 text-base">
+                Table of Contents
+              </h2>
+              <div className="mb-2">
+                {items
+                  .filter(
+                    (it) =>
+                      it.type === "call" &&
+                      (it.data as ExpertCall).formatted_output
+                  )
+                  .map((it, idx) => {
+                    const call = it.data as ExpertCall;
+                    return (
+                      <div
+                        key={call.id}
+                        className="flex justify-between items-baseline py-1.5 border-b border-slate-100 text-sm"
+                      >
+                        <span className="text-slate-800">
+                          {idx + 1}.{" "}
+                          <span className="font-medium">
+                            {call.expert_name}
+                          </span>
                         </span>
-                      </span>
-                      <span className="text-slate-400 text-xs">
-                        {formatDate(call.call_date)}
-                      </span>
-                    </div>
-                  );
-                })}
+                        <span className="text-slate-400 text-xs">
+                          {formatDate(call.call_date)}
+                        </span>
+                      </div>
+                    );
+                  })}
+              </div>
             </div>
-
-            <hr className="my-6 border-slate-200" />
 
             {items.map((item) => {
               if (item.type === "divider") {
@@ -607,14 +678,19 @@ export default function ProjectDetailPage() {
               const call = item.data as ExpertCall;
               if (!call.formatted_output) return null;
               return (
-                <div key={call.id} className="mb-8">
-                  <h1 className="text-lg font-bold text-slate-900 border-b-2 border-blue-800 pb-2 mb-1">
-                    {call.expert_name}
-                  </h1>
-                  <p className="text-slate-400 text-xs italic mb-4">
-                    {formatDate(call.call_date)}
-                  </p>
-                  {renderFormattedText(call.formatted_output)}
+                <div key={call.id}>
+                  {/* Page break indicator */}
+                  <div className="page-break-indicator" />
+                  {/* Call page */}
+                  <div className="border-2 border-dashed border-slate-200 rounded-lg bg-slate-50/50 p-6">
+                    <h1 className="text-lg font-bold text-slate-900 border-b-2 border-blue-800 pb-2 mb-1">
+                      {call.expert_name}
+                    </h1>
+                    <p className="text-slate-400 text-xs italic mb-4">
+                      {formatDate(call.call_date)}
+                    </p>
+                    {renderFormattedText(call.formatted_output)}
+                  </div>
                 </div>
               );
             })}
@@ -774,9 +850,33 @@ export default function ProjectDetailPage() {
                       &#x2630;
                     </span>
                     <div className="flex-1 border-t border-slate-300" />
-                    <span className="text-xs font-medium text-slate-400 uppercase tracking-wide whitespace-nowrap">
-                      {div.label}
-                    </span>
+                    {editingDividerId === div.id ? (
+                      <input
+                        type="text"
+                        value={editDividerLabel}
+                        onChange={(e) => setEditDividerLabel(e.target.value)}
+                        onBlur={() => handleSaveDividerLabel(div.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter")
+                            handleSaveDividerLabel(div.id);
+                          if (e.key === "Escape")
+                            setEditingDividerId(null);
+                        }}
+                        autoFocus
+                        className="text-xs font-medium text-slate-600 bg-white border border-slate-300 rounded px-2 py-0.5 text-center w-40"
+                      />
+                    ) : (
+                      <span
+                        onClick={() => {
+                          setEditingDividerId(div.id);
+                          setEditDividerLabel(div.label);
+                        }}
+                        className="text-xs font-medium text-slate-400 uppercase tracking-wide whitespace-nowrap cursor-pointer hover:text-slate-600"
+                        title="Click to rename"
+                      >
+                        {div.label}
+                      </span>
+                    )}
                     <div className="flex-1 border-t border-slate-300" />
                     <button
                       onClick={() => handleDeleteDivider(div.id)}
@@ -907,7 +1007,7 @@ export default function ProjectDetailPage() {
                                 formatted_output: e.target.value,
                               })
                             }
-                            rows={10}
+                            rows={25}
                             className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs input-font"
                           />
                         </div>

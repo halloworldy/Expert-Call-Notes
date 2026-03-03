@@ -7,6 +7,8 @@ import {
   AlignmentType,
   TableOfContents,
   PageBreak,
+  Footer,
+  PageNumber,
 } from "docx";
 import type { Project, ExpertCall } from "@/lib/types";
 
@@ -44,7 +46,6 @@ function parseFormattedOutput(text: string): Section[] {
 
     const cleanLine = stripMarkdown(line);
 
-    // Match numbered headers: "1. Header" or "## 1. Header" or "## Header"
     const numberedHeaderMatch = cleanLine.match(
       /^\s*(?:#{1,3}\s+)?(\d+)\.\s+(.+)$/
     );
@@ -79,7 +80,6 @@ function parseFormattedOutput(text: string): Section[] {
       continue;
     }
 
-    // Match lettered sub-bullets: "a. " or "a) "
     const subBulletMatch = cleanLine.match(/^\s*([a-z])[.)]\s+(.+)$/);
     if (subBulletMatch && currentSection) {
       if (currentSubBullet) {
@@ -93,7 +93,6 @@ function parseFormattedOutput(text: string): Section[] {
       continue;
     }
 
-    // Match roman numeral sub-levels
     const romanMatch = cleanLine.match(
       /^\s*(i{1,3}|iv|vi{0,3}|ix|x{0,3})[.)]\s+(.+)$/
     );
@@ -105,7 +104,6 @@ function parseFormattedOutput(text: string): Section[] {
       continue;
     }
 
-    // Continuation text
     if (currentSubBullet) {
       currentSubBullet.text += " " + cleanLine;
     } else if (currentSection) {
@@ -179,8 +177,12 @@ function renderFallbackParagraphs(text: string): Paragraph[] {
 
 export async function generateDocx(
   project: Project,
-  calls: ExpertCall[]
+  calls: ExpertCall[],
+  exportTitle?: string,
+  exportSubtitle?: string
 ): Promise<Blob> {
+  const title = exportTitle || project.name;
+  const subtitle = exportSubtitle || "Expert Call Diligence Report";
   const formattedCalls = calls.filter((c) => c.formatted_output);
   const children: (Paragraph | TableOfContents)[] = [];
 
@@ -191,7 +193,7 @@ export async function generateDocx(
       spacing: { before: 3000 },
       children: [
         new TextRun({
-          text: project.name,
+          text: title,
           bold: true,
           size: 52,
           font: "Segoe UI",
@@ -206,7 +208,7 @@ export async function generateDocx(
       spacing: { before: 200 },
       children: [
         new TextRun({
-          text: "Expert Call Diligence Report",
+          text: subtitle,
           size: 28,
           font: "Segoe UI",
           color: "64748b",
@@ -252,7 +254,7 @@ export async function generateDocx(
     })
   );
 
-  // Word built-in TOC field (auto-populated from Heading 1 styles)
+  // Word built-in TOC field (auto-populated from Heading 1 styles, includes page numbers)
   children.push(
     new TableOfContents("Table of Contents", {
       hyperlink: true,
@@ -302,7 +304,6 @@ export async function generateDocx(
     const sections = parseFormattedOutput(call.formatted_output!);
 
     if (sections.length > 0) {
-      // Structured rendering
       for (const section of sections) {
         // Section header
         children.push(
@@ -328,15 +329,10 @@ export async function generateDocx(
               indent: { left: 720 },
               children: [
                 new TextRun({
-                  text: `${sub.letter}. `,
-                  bold: true,
+                  text: `${sub.letter}. ${sub.text}`,
                   size: 22,
                   font: "Segoe UI",
-                }),
-                new TextRun({
-                  text: sub.text,
-                  size: 22,
-                  font: "Segoe UI",
+                  color: "000000",
                 }),
               ],
             })
@@ -350,16 +346,10 @@ export async function generateDocx(
                 indent: { left: 1440 },
                 children: [
                   new TextRun({
-                    text: `${roman.numeral}. `,
-                    italics: true,
+                    text: `${roman.numeral}. ${roman.text}`,
                     size: 22,
                     font: "Segoe UI",
-                    color: "64748b",
-                  }),
-                  new TextRun({
-                    text: roman.text,
-                    size: 22,
-                    font: "Segoe UI",
+                    color: "000000",
                   }),
                 ],
               })
@@ -368,7 +358,6 @@ export async function generateDocx(
         }
       }
     } else {
-      // Fallback: render as plain paragraphs
       const fallback = renderFallbackParagraphs(call.formatted_output!);
       for (const p of fallback) {
         children.push(p);
@@ -382,6 +371,13 @@ export async function generateDocx(
     },
     styles: {
       default: {
+        document: {
+          run: {
+            font: "Segoe UI",
+            size: 22,
+            color: "000000",
+          },
+        },
         heading1: {
           run: {
             font: "Segoe UI",
@@ -398,6 +394,7 @@ export async function generateDocx(
     sections: [
       {
         properties: {
+          titlePage: true,
           page: {
             margin: {
               top: 1440,
@@ -406,6 +403,26 @@ export async function generateDocx(
               left: 1440,
             },
           },
+        },
+        footers: {
+          default: new Footer({
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.CENTER,
+                children: [
+                  new TextRun({
+                    children: [PageNumber.CURRENT],
+                    font: "Segoe UI",
+                    size: 18,
+                    color: "94a3b8",
+                  }),
+                ],
+              }),
+            ],
+          }),
+          first: new Footer({
+            children: [],
+          }),
         },
         children,
       },

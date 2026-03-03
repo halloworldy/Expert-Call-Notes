@@ -129,19 +129,26 @@ function formatDate(dateStr: string): string {
 
 export async function POST(request: Request) {
   try {
-    const { projectName, calls } = (await request.json()) as {
-      projectName: string;
-      calls: CallData[];
-    };
+    const { projectName, calls, exportTitle, exportSubtitle } =
+      (await request.json()) as {
+        projectName: string;
+        calls: CallData[];
+        exportTitle?: string;
+        exportSubtitle?: string;
+      };
+
+    const title = exportTitle || projectName;
+    const subtitle = exportSubtitle || "Expert Call Diligence Report";
 
     const doc = new PDFDocument({
       size: "A4",
       margins: { top: 60, bottom: 60, left: 60, right: 60 },
       info: {
-        Title: `${projectName} - Diligence Report`,
+        Title: `${title} - Diligence Report`,
         Author: "Expert Call Notes",
       },
       autoFirstPage: true,
+      bufferPages: true,
     });
 
     const chunks: Uint8Array[] = [];
@@ -152,19 +159,19 @@ export async function POST(request: Request) {
     const mr = 60;
     const contentWidth = pageWidth - ml - mr;
 
-    // ---- TITLE PAGE ----
+    // ---- TITLE PAGE (page 0) ----
     doc.moveDown(10);
     doc
       .font("Helvetica-Bold")
       .fontSize(28)
       .fillColor("#1a365d")
-      .text(projectName, ml, doc.y, { width: contentWidth, align: "center" });
+      .text(title, ml, doc.y, { width: contentWidth, align: "center" });
     doc.moveDown(0.8);
     doc
       .font("Helvetica")
       .fontSize(14)
       .fillColor("#64748b")
-      .text("Expert Call Diligence Report", ml, doc.y, {
+      .text(subtitle, ml, doc.y, {
         width: contentWidth,
         align: "center",
       });
@@ -178,7 +185,7 @@ export async function POST(request: Request) {
         align: "center",
       });
 
-    // ---- TABLE OF CONTENTS ----
+    // ---- TABLE OF CONTENTS (page 1) ----
     doc.addPage();
     doc
       .font("Helvetica-Bold")
@@ -187,7 +194,6 @@ export async function POST(request: Request) {
       .text("Table of Contents", ml, doc.y, { width: contentWidth });
     doc.moveDown(0.3);
 
-    // Thin rule under heading
     doc
       .moveTo(ml, doc.y)
       .lineTo(pageWidth - mr, doc.y)
@@ -196,29 +202,36 @@ export async function POST(request: Request) {
       .stroke();
     doc.moveDown(0.8);
 
+    // Render TOC entries and track Y positions for page numbers
+    const tocYPositions: number[] = [];
+
     calls.forEach((call, i) => {
-      const tocY = doc.y;
+      tocYPositions.push(doc.y);
       doc
         .font("Helvetica")
-        .fontSize(11)
+        .fontSize(10)
         .fillColor("#1a365d")
-        .text(`${i + 1}. `, ml, tocY, { continued: true, goTo: `call-${i}` });
+        .text(`${i + 1}. `, ml, doc.y, { continued: true, goTo: `call-${i}` });
       doc
         .font("Helvetica-Bold")
-        .fontSize(11)
+        .fontSize(10)
         .fillColor("#1a365d")
         .text(call.expert_name, { continued: true, goTo: `call-${i}` });
       doc
         .font("Helvetica")
-        .fontSize(9)
+        .fontSize(10)
         .fillColor("#94a3b8")
         .text(`   ${formatDate(call.call_date)}`, { goTo: `call-${i}` });
       doc.moveDown(0.4);
     });
 
     // ---- CALL SECTIONS ----
+    const callPageNumbers: number[] = [];
+
     calls.forEach((call, i) => {
       doc.addPage();
+      const range = doc.bufferedPageRange();
+      callPageNumbers.push(range.count); // 1-indexed page number
       doc.addNamedDestination(`call-${i}`);
 
       // Call header
@@ -261,45 +274,32 @@ export async function POST(request: Request) {
             });
           doc.moveDown(0.3);
 
-          // Sub-bullets
+          // Sub-bullets - no bold, no italic, all black
           for (const sub of section.subBullets) {
             const subX = ml + 25;
             const subWidth = contentWidth - 25;
 
-            // Render letter bold then text regular on same line
-            doc
-              .font("Helvetica-Bold")
-              .fontSize(10)
-              .fillColor("#0f172a")
-              .text(`${sub.letter}. `, subX, doc.y, {
-                continued: true,
-                width: subWidth,
-              });
             doc
               .font("Helvetica")
               .fontSize(10)
-              .fillColor("#0f172a")
-              .text(sub.text, { width: subWidth });
+              .fillColor("#000000")
+              .text(`${sub.letter}. ${sub.text}`, subX, doc.y, {
+                width: subWidth,
+              });
             doc.moveDown(0.15);
 
-            // Roman numerals
+            // Roman numerals - no italic, black
             for (const roman of sub.romanItems) {
               const romX = ml + 50;
               const romWidth = contentWidth - 50;
 
               doc
-                .font("Helvetica-Oblique")
-                .fontSize(10)
-                .fillColor("#64748b")
-                .text(`${roman.numeral}. `, romX, doc.y, {
-                  continued: true,
-                  width: romWidth,
-                });
-              doc
                 .font("Helvetica")
                 .fontSize(10)
-                .fillColor("#334155")
-                .text(roman.text, { width: romWidth });
+                .fillColor("#000000")
+                .text(`${roman.numeral}. ${roman.text}`, romX, doc.y, {
+                  width: romWidth,
+                });
               doc.moveDown(0.1);
             }
           }
@@ -317,11 +317,38 @@ export async function POST(request: Request) {
           doc
             .font("Helvetica")
             .fontSize(10)
-            .fillColor("#0f172a")
+            .fillColor("#000000")
             .text(trimmed, ml, doc.y, { width: contentWidth });
           doc.moveDown(0.1);
         }
       }
+    });
+
+    // ---- ADD PAGE NUMBERS TO ALL PAGES (except title page) ----
+    const totalPages = doc.bufferedPageRange().count;
+    for (let i = 1; i < totalPages; i++) {
+      doc.switchToPage(i);
+      doc
+        .font("Helvetica")
+        .fontSize(9)
+        .fillColor("#94a3b8")
+        .text(String(i + 1), ml, doc.page.height - 40, {
+          width: contentWidth,
+          align: "center",
+        });
+    }
+
+    // ---- ADD PAGE NUMBERS TO TOC ENTRIES ----
+    doc.switchToPage(1); // TOC page
+    calls.forEach((_call, i) => {
+      doc
+        .font("Helvetica")
+        .fontSize(10)
+        .fillColor("#94a3b8")
+        .text(String(callPageNumbers[i]), pageWidth - mr - 30, tocYPositions[i], {
+          width: 30,
+          align: "right",
+        });
     });
 
     const pdfBuffer = await new Promise<Buffer>((resolve) => {
@@ -332,7 +359,7 @@ export async function POST(request: Request) {
     return new Response(pdfBuffer as unknown as BodyInit, {
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="${projectName.replace(/\s+/g, "_")}_Diligence.pdf"`,
+        "Content-Disposition": `attachment; filename="${title.replace(/\s+/g, "_")}_Diligence.pdf"`,
       },
     });
   } catch (error) {

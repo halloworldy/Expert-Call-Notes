@@ -57,6 +57,25 @@ body {
   background: #94a3b8;
 }
 
+/* Page break indicator in preview */
+.page-break-indicator {
+  position: relative;
+  margin: 24px 0;
+  border-top: 2px dashed #cbd5e1;
+  text-align: center;
+}
+.page-break-indicator::after {
+  content: "PAGE BREAK";
+  position: relative;
+  top: -10px;
+  background: #ffffff;
+  padding: 0 12px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #94a3b8;
+  letter-spacing: 0.1em;
+}
+
 /* Preview document styles */
 .preview-doc {
   font-family: "Segoe UI", Arial, Calibri, sans-serif;
