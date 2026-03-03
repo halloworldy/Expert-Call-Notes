@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 
+export const maxDuration = 120;
+
 export async function POST(request: Request) {
   try {
     const { rawNotes, transcript, prompt } = await request.json();
@@ -14,6 +16,7 @@ export async function POST(request: Request) {
 
     const anthropic = new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY,
+      timeout: 120_000,
     });
 
     let inputContent = "";

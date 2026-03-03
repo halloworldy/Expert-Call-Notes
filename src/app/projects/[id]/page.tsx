@@ -265,6 +265,8 @@ export default function ProjectDetailPage() {
     if (!call) return;
 
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 120_000);
       const response = await fetch("/api/format", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -273,7 +275,9 @@ export default function ProjectDetailPage() {
           transcript: call.transcript,
           prompt,
         }),
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
       const result = await response.json();
       if (result.formatted) {
         await supabase
@@ -286,9 +290,13 @@ export default function ProjectDetailPage() {
           .eq("id", projectId);
         loadCalls();
         loadProject();
+      } else if (result.error) {
+        alert(`Formatting failed: ${result.error}`);
       }
-    } catch {
-      // handled via formatting state
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        alert("Formatting timed out after 2 minutes. Try again or use a shorter transcript.");
+      }
     }
     setFormatting(null);
   }
