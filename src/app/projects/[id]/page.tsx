@@ -605,90 +605,201 @@ export default function ProjectDetailPage() {
 
         {/* Document Preview */}
         {showPreview && (
-          <div className="rounded-lg border border-slate-300 mb-5 preview-doc">
+          <div
+            className="rounded-lg mb-5"
+            style={{
+              background: "#dfe6ee",
+              padding: 32,
+              fontFamily: "'Segoe UI', Arial, Calibri, sans-serif",
+              lineHeight: 1.6,
+            }}
+          >
             {/* Title Page */}
-            <div className="preview-page flex flex-col items-center justify-center" style={{ minHeight: 320 }}>
-              <h1 className="text-2xl font-bold border-0 pb-0 mb-3" style={{ color: "#1a365d" }}>
+            <div
+              style={{
+                background: "#ffffff",
+                borderRadius: 4,
+                boxShadow:
+                  "0 2px 8px rgba(0,0,0,0.12), 0 0 1px rgba(0,0,0,0.08)",
+                padding: "80px 56px",
+                textAlign: "center",
+                minHeight: 320,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 26,
+                  fontWeight: 700,
+                  color: "#1a365d",
+                  marginBottom: 12,
+                }}
+              >
                 {exportTitle || project.name}
-              </h1>
-              <div className="w-24 border-t-2 mb-3" style={{ borderColor: "#2d5899" }} />
-              <p className="text-sm" style={{ color: "#64748b" }}>
+              </div>
+              <div
+                style={{
+                  width: 80,
+                  borderTop: "2px solid #2d5899",
+                  marginBottom: 12,
+                }}
+              />
+              <div style={{ fontSize: 14, color: "#64748b" }}>
                 {exportSubtitle || "Expert Call Diligence Report"}
-              </p>
-              <p className="text-xs mt-2" style={{ color: "#94a3b8" }}>
+              </div>
+              <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 8 }}>
                 {new Date().toLocaleDateString("en-US", {
                   month: "long",
                   day: "numeric",
                   year: "numeric",
                 })}
-              </p>
-            </div>
-
-            {/* Table of Contents Page */}
-            <div className="preview-page">
-              <h2 className="font-bold text-base mb-1" style={{ color: "#1a365d" }}>
-                Table of Contents
-              </h2>
-              <div className="border-t mb-4" style={{ borderColor: "#2d5899" }} />
-              <div>
-                {items
-                  .filter(
-                    (it) =>
-                      it.type === "call" &&
-                      (it.data as ExpertCall).formatted_output
-                  )
-                  .map((it, idx) => {
-                    const call = it.data as ExpertCall;
-                    return (
-                      <div
-                        key={call.id}
-                        className="flex justify-between items-baseline py-2 border-b text-sm"
-                        style={{ borderColor: "#eef1f5" }}
-                      >
-                        <span className="text-slate-900">
-                          {idx + 1}.{" "}
-                          <span className="font-medium">
-                            {call.expert_name}
-                          </span>
-                        </span>
-                        <span
-                          className="text-xs ml-4 tabular-nums"
-                          style={{ color: "#94a3b8" }}
-                        >
-                          {formatDate(call.call_date)}
-                        </span>
-                      </div>
-                    );
-                  })}
               </div>
             </div>
 
+            {/* Table of Contents Page */}
+            <div
+              style={{
+                background: "#ffffff",
+                borderRadius: 4,
+                boxShadow:
+                  "0 2px 8px rgba(0,0,0,0.12), 0 0 1px rgba(0,0,0,0.08)",
+                padding: "48px 56px",
+                marginTop: 24,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 16,
+                  fontWeight: 700,
+                  color: "#1a365d",
+                  marginBottom: 4,
+                }}
+              >
+                Table of Contents
+              </div>
+              <div
+                style={{
+                  borderTop: "2px solid #2d5899",
+                  marginBottom: 20,
+                }}
+              />
+              {items
+                .filter(
+                  (it) =>
+                    it.type === "call" &&
+                    (it.data as ExpertCall).formatted_output
+                )
+                .map((it, idx) => {
+                  const call = it.data as ExpertCall;
+                  return (
+                    <div
+                      key={call.id}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "baseline",
+                        padding: "8px 0",
+                        borderBottom: "1px solid #eef1f5",
+                        fontSize: 13,
+                      }}
+                    >
+                      <span style={{ color: "#0f172a" }}>
+                        {idx + 1}.{" "}
+                        <span style={{ fontWeight: 500 }}>
+                          {call.expert_name}
+                        </span>
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 11,
+                          color: "#94a3b8",
+                          marginLeft: 16,
+                        }}
+                      >
+                        {formatDate(call.call_date)}
+                      </span>
+                    </div>
+                  );
+                })}
+            </div>
+
+            {/* Call pages */}
             {items.map((item) => {
               if (item.type === "divider") {
                 return (
                   <div
                     key={item.data.id}
-                    className="preview-page flex items-center gap-4"
-                    style={{ minHeight: "auto", padding: "20px 56px" }}
+                    style={{
+                      background: "#ffffff",
+                      borderRadius: 4,
+                      boxShadow:
+                        "0 2px 8px rgba(0,0,0,0.12), 0 0 1px rgba(0,0,0,0.08)",
+                      padding: "20px 56px",
+                      marginTop: 24,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 16,
+                    }}
                   >
-                    <div className="flex-1 border-t-2 border-slate-300" />
-                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-widest">
+                    <div
+                      style={{ flex: 1, borderTop: "2px solid #cbd5e1" }}
+                    />
+                    <span
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: "#64748b",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.1em",
+                      }}
+                    >
                       {(item.data as SectionDivider).label}
                     </span>
-                    <div className="flex-1 border-t-2 border-slate-300" />
+                    <div
+                      style={{ flex: 1, borderTop: "2px solid #cbd5e1" }}
+                    />
                   </div>
                 );
               }
               const call = item.data as ExpertCall;
               if (!call.formatted_output) return null;
               return (
-                <div key={call.id} className="preview-page">
-                  <h1 className="text-lg font-bold pb-2 mb-1" style={{ color: "#1a365d", borderBottom: "2px solid #2d5899" }}>
+                <div
+                  key={call.id}
+                  style={{
+                    background: "#ffffff",
+                    borderRadius: 4,
+                    boxShadow:
+                      "0 2px 8px rgba(0,0,0,0.12), 0 0 1px rgba(0,0,0,0.08)",
+                    padding: "48px 56px",
+                    marginTop: 24,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 18,
+                      fontWeight: 700,
+                      color: "#1a365d",
+                      borderBottom: "2px solid #2d5899",
+                      paddingBottom: 8,
+                      marginBottom: 4,
+                    }}
+                  >
                     {call.expert_name}
-                  </h1>
-                  <p className="text-xs italic mb-5" style={{ color: "#94a3b8" }}>
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      fontStyle: "italic",
+                      color: "#94a3b8",
+                      marginBottom: 20,
+                    }}
+                  >
                     {formatDate(call.call_date)}
-                  </p>
+                  </div>
                   {renderFormattedText(call.formatted_output)}
                 </div>
               );

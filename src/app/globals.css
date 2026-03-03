@@ -57,67 +57,7 @@ body {
   background: #94a3b8;
 }
 
-/* Page break indicator in preview */
-.page-break-indicator {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
-  padding: 20px 0;
-}
-.page-break-indicator::before,
-.page-break-indicator::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: linear-gradient(
-    to right,
-    transparent,
-    #94a3b8 30%,
-    #94a3b8 70%,
-    transparent
-  );
-}
-.page-break-indicator::before {
-  content: "";
-}
-.page-break-indicator::after {
-  content: "";
-}
-
-/* Preview document styles */
-.preview-doc {
-  font-family: "Segoe UI", Arial, Calibri, sans-serif;
-  line-height: 1.6;
-  background: #e2e8f0;
-  padding: 32px !important;
-  border-radius: 8px;
-}
-.preview-page {
-  background: #ffffff;
-  border-radius: 4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1), 0 0 1px rgba(0, 0, 0, 0.08);
-  padding: 48px 56px;
-  position: relative;
-}
-.preview-page + .preview-page {
-  margin-top: 24px;
-}
-.preview-doc h1 {
-  color: var(--primary);
-  font-size: 1.5rem;
-  font-weight: 700;
-  border-bottom: 2px solid var(--primary-light);
-  padding-bottom: 0.5rem;
-  margin-bottom: 1rem;
-}
-.preview-doc h2 {
-  color: var(--primary);
-  font-size: 1.1rem;
-  font-weight: 600;
-  margin-top: 1.25rem;
-  margin-bottom: 0.5rem;
-}
-.preview-doc p {
-  margin-bottom: 0.5rem;
+/* Input / textarea font for edit boxes */
+.input-font-style {
+  font-family: Arial, Calibri, "Segoe UI", sans-serif !important;
 }
