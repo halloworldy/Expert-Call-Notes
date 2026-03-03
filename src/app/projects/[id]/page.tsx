@@ -7,8 +7,6 @@ import { DEFAULT_PROMPT } from "@/lib/default-prompt";
 import type { Project, ExpertCall } from "@/lib/types";
 import Link from "next/link";
 
-const ANON_USER_ID = "00000000-0000-0000-0000-000000000000";
-
 export default function ProjectDetailPage() {
   const params = useParams();
   const projectId = params.id as string;
@@ -76,7 +74,6 @@ export default function ProjectDetailPage() {
         call_date: callDate,
         raw_notes: rawNotes,
         transcript: transcript || null,
-        created_by: ANON_USER_ID,
       })
       .select()
       .single();
@@ -89,7 +86,7 @@ export default function ProjectDetailPage() {
     // Update project updated_at and updated_by
     await supabase
       .from("projects")
-      .update({ updated_by: ANON_USER_ID })
+      .update({ updated_at: new Date().toISOString() })
       .eq("id", projectId);
 
     // Reset form
@@ -132,7 +129,7 @@ export default function ProjectDetailPage() {
         // Update project
         await supabase
           .from("projects")
-          .update({ updated_by: ANON_USER_ID })
+          .update({ updated_at: new Date().toISOString() })
           .eq("id", projectId);
 
         loadCalls();

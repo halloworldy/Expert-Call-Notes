@@ -5,8 +5,6 @@ import { createClient } from "@/lib/supabase-browser";
 import type { Project } from "@/lib/types";
 import Link from "next/link";
 
-const ANON_USER_ID = "00000000-0000-0000-0000-000000000000";
-
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [newName, setNewName] = useState("");
@@ -39,8 +37,6 @@ export default function ProjectsPage() {
 
     const { error } = await supabase.from("projects").insert({
       name: newName.trim(),
-      created_by: ANON_USER_ID,
-      updated_by: ANON_USER_ID,
     });
 
     if (!error) {

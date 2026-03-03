@@ -12,35 +12,11 @@ create extension if not exists "uuid-ossp";
 create table if not exists projects (
   id uuid default uuid_generate_v4() primary key,
   name text not null,
-  created_by uuid references auth.users(id) not null,
+  created_by text,
   created_at timestamptz default now() not null,
   updated_at timestamptz default now() not null,
-  updated_by uuid references auth.users(id) not null
+  updated_by text
 );
-
--- Enable RLS
-alter table projects enable row level security;
-
--- Policies: authenticated users can read all projects, insert their own, update any
-create policy "Authenticated users can view all projects"
-  on projects for select
-  to authenticated
-  using (true);
-
-create policy "Authenticated users can create projects"
-  on projects for insert
-  to authenticated
-  with check (auth.uid() = created_by);
-
-create policy "Authenticated users can update projects"
-  on projects for update
-  to authenticated
-  using (true);
-
-create policy "Authenticated users can delete their own projects"
-  on projects for delete
-  to authenticated
-  using (auth.uid() = created_by);
 
 -- ============================================================
 -- Expert calls table
@@ -54,34 +30,16 @@ create table if not exists expert_calls (
   transcript text,
   formatted_output text,
   docx_blob text,
-  created_by uuid references auth.users(id) not null,
+  created_by text,
   created_at timestamptz default now() not null,
   updated_at timestamptz default now() not null
 );
 
--- Enable RLS
-alter table expert_calls enable row level security;
-
--- Policies: authenticated users can CRUD expert calls
-create policy "Authenticated users can view all expert calls"
-  on expert_calls for select
-  to authenticated
-  using (true);
-
-create policy "Authenticated users can create expert calls"
-  on expert_calls for insert
-  to authenticated
-  with check (auth.uid() = created_by);
-
-create policy "Authenticated users can update expert calls"
-  on expert_calls for update
-  to authenticated
-  using (true);
-
-create policy "Authenticated users can delete expert calls"
-  on expert_calls for delete
-  to authenticated
-  using (auth.uid() = created_by);
+-- ============================================================
+-- Grant public access (no auth required)
+-- ============================================================
+grant all on projects to anon;
+grant all on expert_calls to anon;
 
 -- ============================================================
 -- Auto-update updated_at timestamp trigger
