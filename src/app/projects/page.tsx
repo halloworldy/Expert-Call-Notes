@@ -5,27 +5,20 @@ import { createClient } from "@/lib/supabase-browser";
 import type { Project } from "@/lib/types";
 import Link from "next/link";
 
+const ANON_USER_ID = "00000000-0000-0000-0000-000000000000";
+
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [newName, setNewName] = useState("");
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
-  const [userEmail, setUserEmail] = useState("");
 
   const supabase = createClient();
 
   useEffect(() => {
     loadProjects();
-    loadUser();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  async function loadUser() {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (user) setUserEmail(user.email ?? "");
-  }
 
   async function loadProjects() {
     const { data, error } = await supabase
@@ -44,15 +37,10 @@ export default function ProjectsPage() {
     if (!newName.trim()) return;
     setCreating(true);
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-
     const { error } = await supabase.from("projects").insert({
       name: newName.trim(),
-      created_by: user.id,
-      updated_by: user.id,
+      created_by: ANON_USER_ID,
+      updated_by: ANON_USER_ID,
     });
 
     if (!error) {
@@ -60,11 +48,6 @@ export default function ProjectsPage() {
       loadProjects();
     }
     setCreating(false);
-  }
-
-  async function handleSignOut() {
-    await supabase.auth.signOut();
-    window.location.href = "/auth/login";
   }
 
   function formatDate(dateStr: string) {
@@ -84,15 +67,6 @@ export default function ProjectsPage() {
           <h1 className="text-xl font-bold text-gray-900">
             PE Diligence Notes
           </h1>
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-gray-600">{userEmail}</span>
-            <button
-              onClick={handleSignOut}
-              className="text-sm text-gray-500 hover:text-gray-700"
-            >
-              Sign Out
-            </button>
-          </div>
         </div>
       </header>
 

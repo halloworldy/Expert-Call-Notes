@@ -7,6 +7,8 @@ import { DEFAULT_PROMPT } from "@/lib/default-prompt";
 import type { Project, ExpertCall } from "@/lib/types";
 import Link from "next/link";
 
+const ANON_USER_ID = "00000000-0000-0000-0000-000000000000";
+
 export default function ProjectDetailPage() {
   const params = useParams();
   const projectId = params.id as string;
@@ -65,11 +67,6 @@ export default function ProjectDetailPage() {
     if (!expertName.trim() || !rawNotes.trim()) return;
     setSubmitting(true);
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-
     // Save the call first
     const { data: newCall, error } = await supabase
       .from("expert_calls")
@@ -79,7 +76,7 @@ export default function ProjectDetailPage() {
         call_date: callDate,
         raw_notes: rawNotes,
         transcript: transcript || null,
-        created_by: user.id,
+        created_by: ANON_USER_ID,
       })
       .select()
       .single();
@@ -92,7 +89,7 @@ export default function ProjectDetailPage() {
     // Update project updated_at and updated_by
     await supabase
       .from("projects")
-      .update({ updated_by: user.id })
+      .update({ updated_by: ANON_USER_ID })
       .eq("id", projectId);
 
     // Reset form
@@ -133,15 +130,10 @@ export default function ProjectDetailPage() {
           .eq("id", callId);
 
         // Update project
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        if (user) {
-          await supabase
-            .from("projects")
-            .update({ updated_by: user.id })
-            .eq("id", projectId);
-        }
+        await supabase
+          .from("projects")
+          .update({ updated_by: ANON_USER_ID })
+          .eq("id", projectId);
 
         loadCalls();
         loadProject();
