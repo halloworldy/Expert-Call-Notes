@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, type DragEvent } from "react";
+import { useEffect, useState, useCallback, useRef, type DragEvent } from "react";
 import { useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase-browser";
 import { DEFAULT_PROMPT } from "@/lib/default-prompt";
@@ -53,8 +53,8 @@ function renderFormattedText(text: string) {
     const subMatch = clean.match(/^([a-z])[.)]\s+(.+)$/);
     if (subMatch) {
       elements.push(
-        <div key={i} className="ml-5 my-0.5 text-slate-700 text-sm">
-          <span className="font-medium text-slate-800">{subMatch[1]}.</span>{" "}
+        <div key={i} className="ml-6 my-0.5 text-black text-sm">
+          <span className="font-medium">{subMatch[1]}.</span>{" "}
           {subMatch[2]}
         </div>
       );
@@ -65,15 +65,15 @@ function renderFormattedText(text: string) {
     );
     if (romanMatch) {
       elements.push(
-        <div key={i} className="ml-10 my-0.5 text-slate-600 text-sm">
-          <span className="italic text-slate-500">{romanMatch[1]}.</span>{" "}
+        <div key={i} className="ml-12 my-0.5 text-black text-sm">
+          {romanMatch[1]}.{" "}
           {romanMatch[2]}
         </div>
       );
       return;
     }
     elements.push(
-      <div key={i} className="my-0.5 text-slate-700 text-sm">
+      <div key={i} className="my-0.5 text-black text-sm">
         {clean}
       </div>
     );
@@ -134,7 +134,7 @@ export default function ProjectDetailPage() {
   const [editingDividerId, setEditingDividerId] = useState<string | null>(null);
   const [editDividerLabel, setEditDividerLabel] = useState("");
 
-  // Export settings
+  // Export settings (persisted to DB)
   const [exportTitle, setExportTitle] = useState("");
   const [exportSubtitle, setExportSubtitle] = useState("");
 
@@ -146,7 +146,11 @@ export default function ProjectDetailPage() {
       .select("*")
       .eq("id", projectId)
       .single();
-    if (data) setProject(data);
+    if (data) {
+      setProject(data);
+      if (data.export_title) setExportTitle(data.export_title);
+      if (data.export_subtitle) setExportSubtitle(data.export_subtitle);
+    }
   }, [projectId, supabase]);
 
   const loadCalls = useCallback(async () => {
@@ -195,6 +199,25 @@ export default function ProjectDetailPage() {
     loadCalls();
     loadDividers();
   }, [loadProject, loadCalls, loadDividers]);
+
+  // Auto-save export title/subtitle to DB with debounce
+  const titleSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!project) return;
+    if (titleSaveTimer.current) clearTimeout(titleSaveTimer.current);
+    titleSaveTimer.current = setTimeout(async () => {
+      await supabase
+        .from("projects")
+        .update({
+          export_title: exportTitle || null,
+          export_subtitle: exportSubtitle || null,
+        })
+        .eq("id", projectId);
+    }, 800);
+    return () => {
+      if (titleSaveTimer.current) clearTimeout(titleSaveTimer.current);
+    };
+  }, [exportTitle, exportSubtitle, project, projectId, supabase]);
 
   // ---- Create call ----
   async function handleSaveCall(e: React.FormEvent) {
@@ -392,7 +415,7 @@ export default function ProjectDetailPage() {
     e.currentTarget.classList.remove("drag-over");
   }
 
-  function handleDrop(e: DragEvent<HTMLDivElement>, targetId: string) {
+  async function handleDrop(e: DragEvent<HTMLDivElement>, targetId: string) {
     e.preventDefault();
     e.currentTarget.classList.remove("drag-over");
     if (!draggedItemId || draggedItemId === targetId) return;
@@ -409,8 +432,8 @@ export default function ProjectDetailPage() {
     const [removed] = newItems.splice(dragIdx, 1);
     newItems.splice(targetIdx, 0, removed);
     setItems(newItems);
-    saveItemOrder(newItems);
     setDraggedItemId(null);
+    await saveItemOrder(newItems);
   }
 
   function handleDragEnd() {
@@ -437,6 +460,8 @@ export default function ProjectDetailPage() {
   // ---- Dividers ----
   async function handleAddDivider() {
     const label = newDividerLabel.trim() || "Section Divider";
+    // Normalize all existing sort_orders first, then append new divider
+    await saveItemOrder(items);
     const { error } = await supabase.from("section_dividers").insert({
       project_id: projectId,
       label,
@@ -450,12 +475,35 @@ export default function ProjectDetailPage() {
       return;
     }
     setNewDividerLabel("");
-    loadDividers();
+    await Promise.all([loadDividers(), loadCalls()]);
   }
 
   async function handleDeleteDivider(id: string) {
     await supabase.from("section_dividers").delete().eq("id", id);
-    loadDividers();
+    // Reload both and re-normalize sort orders
+    const [dividersResult, callsResult] = await Promise.all([
+      supabase
+        .from("section_dividers")
+        .select("*")
+        .eq("project_id", projectId)
+        .order("sort_order", { ascending: true }),
+      supabase
+        .from("expert_calls")
+        .select("*")
+        .eq("project_id", projectId)
+        .order("sort_order", { ascending: true }),
+    ]);
+    const newDividers = dividersResult.data || [];
+    const newCalls = callsResult.data || [];
+    const merged: ProjectItem[] = [
+      ...newCalls.map((c: ExpertCall) => ({ type: "call" as const, data: c })),
+      ...newDividers.map((d: SectionDivider) => ({ type: "divider" as const, data: d })),
+    ];
+    merged.sort((a, b) => (a.data.sort_order ?? 0) - (b.data.sort_order ?? 0));
+    // Re-normalize sort orders
+    await saveItemOrder(merged);
+    setDividers(newDividers);
+    setCalls(newCalls);
   }
 
   async function handleSaveDividerLabel(dividerId: string) {
@@ -492,6 +540,18 @@ export default function ProjectDetailPage() {
   }
 
   const formattedCallCount = calls.filter((c) => c.formatted_output).length;
+
+  // Compute preview stats for the summary header
+  const previewFormattedCalls = items.filter(
+    (it) => it.type === "call" && (it.data as ExpertCall).formatted_output
+  );
+  const previewPageCount = 2 + previewFormattedCalls.length; // title + toc + each call
+  const previewWordCount = (() => {
+    const allText = previewFormattedCalls
+      .map((it) => (it.data as ExpertCall).formatted_output!)
+      .join(" ");
+    return allText.trim() ? allText.trim().split(/\s+/).length : 0;
+  })();
 
   if (loading) {
     return (
@@ -558,20 +618,9 @@ export default function ProjectDetailPage() {
           </div>
         </div>
 
-        {/* Export Settings */}
-        <details className="group bg-white rounded-lg border border-slate-200 mb-3">
-          <summary className="cursor-pointer list-none px-4 py-3 flex items-center justify-between text-sm font-semibold text-slate-800 hover:bg-slate-50 rounded-lg transition-colors">
-            <span>Export Settings</span>
-            <svg
-              className="w-4 h-4 text-slate-400 transition-transform group-open:rotate-180"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
-          </summary>
-          <div className="px-4 pb-4 space-y-3 border-t border-slate-100 pt-3">
+        {/* Document Title & Subtitle */}
+        <div className="bg-white rounded-lg border border-slate-200 mb-3 px-4 py-4">
+          <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-slate-500 mb-1">
                 Document Title
@@ -583,9 +632,6 @@ export default function ProjectDetailPage() {
                 placeholder={project.name}
                 className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
-              <p className="text-xs text-slate-400 mt-1">
-                Leave blank to use the project name
-              </p>
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-500 mb-1">
@@ -598,12 +644,9 @@ export default function ProjectDetailPage() {
                 placeholder="Expert Call Diligence Report"
                 className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
-              <p className="text-xs text-slate-400 mt-1">
-                Leave blank for default subtitle
-              </p>
             </div>
           </div>
-        </details>
+        </div>
 
         {/* Document Preview */}
         <details
@@ -612,7 +655,14 @@ export default function ProjectDetailPage() {
           onToggle={(e) => setShowPreview((e.target as HTMLDetailsElement).open)}
         >
           <summary className="cursor-pointer list-none px-4 py-3 flex items-center justify-between text-sm font-semibold text-slate-800 hover:bg-slate-50 rounded-lg transition-colors">
-            <span>Document Preview</span>
+            <span className="flex items-center gap-3">
+              Document Preview
+              {previewFormattedCalls.length > 0 && (
+                <span className="text-xs font-normal text-slate-400">
+                  {previewPageCount} pages &middot; {previewWordCount.toLocaleString()} words
+                </span>
+              )}
+            </span>
             <svg
               className="w-4 h-4 text-slate-400 transition-transform group-open:rotate-180"
               fill="none"
@@ -625,7 +675,52 @@ export default function ProjectDetailPage() {
         </details>
 
         {/* Document Preview */}
-        {showPreview && (
+        {showPreview && (() => {
+          // Build page list for numbering: title (p1, no number shown), TOC (p2), then call/divider pages
+          const formattedItems = items.filter(
+            (it) =>
+              it.type === "divider" ||
+              (it.type === "call" && (it.data as ExpertCall).formatted_output)
+          );
+          // Page 1 = title, Page 2 = TOC, Page 3+ = calls/dividers (dividers share page with next call)
+          // For simplicity: each call gets its own page, dividers are inline
+          let pageCounter = 2; // title=1, toc=2
+          const callPageMap = new Map<string, number>();
+          for (const it of formattedItems) {
+            if (it.type === "call") {
+              pageCounter++;
+              callPageMap.set(it.data.id, pageCounter);
+            }
+          }
+          const totalPages = pageCounter;
+
+          // Word count across all formatted calls
+          const allFormattedText = items
+            .filter((it) => it.type === "call" && (it.data as ExpertCall).formatted_output)
+            .map((it) => (it.data as ExpertCall).formatted_output!)
+            .join(" ");
+          const wordCount = allFormattedText.trim() ? allFormattedText.trim().split(/\s+/).length : 0;
+
+          const pageStyle = (mt = 24): React.CSSProperties => ({
+            background: "#ffffff",
+            borderRadius: 4,
+            boxShadow: "0 2px 8px rgba(0,0,0,0.12), 0 0 1px rgba(0,0,0,0.08)",
+            padding: "48px 56px",
+            marginTop: mt,
+            position: "relative",
+          });
+
+          const pageNumberStyle: React.CSSProperties = {
+            position: "absolute",
+            bottom: 16,
+            left: 0,
+            right: 0,
+            textAlign: "center",
+            fontSize: 10,
+            color: "#94a3b8",
+          };
+
+          return (
           <div
             className="rounded-lg mb-5"
             style={{
@@ -635,13 +730,23 @@ export default function ProjectDetailPage() {
               lineHeight: 1.6,
             }}
           >
-            {/* Title Page */}
+            {/* Stats bar */}
+            <div style={{
+              display: "flex",
+              gap: 16,
+              marginBottom: 16,
+              fontSize: 12,
+              color: "#64748b",
+              fontWeight: 500,
+            }}>
+              <span>{totalPages} pages</span>
+              <span>{wordCount.toLocaleString()} words</span>
+            </div>
+
+            {/* Title Page (p1 - no page number) */}
             <div
               style={{
-                background: "#ffffff",
-                borderRadius: 4,
-                boxShadow:
-                  "0 2px 8px rgba(0,0,0,0.12), 0 0 1px rgba(0,0,0,0.08)",
+                ...pageStyle(0),
                 padding: "80px 56px",
                 textAlign: "center",
                 minHeight: 320,
@@ -680,17 +785,8 @@ export default function ProjectDetailPage() {
               </div>
             </div>
 
-            {/* Table of Contents Page */}
-            <div
-              style={{
-                background: "#ffffff",
-                borderRadius: 4,
-                boxShadow:
-                  "0 2px 8px rgba(0,0,0,0.12), 0 0 1px rgba(0,0,0,0.08)",
-                padding: "48px 56px",
-                marginTop: 24,
-              }}
-            >
+            {/* Table of Contents Page (p2) */}
+            <div style={pageStyle()}>
               <div
                 style={{
                   fontSize: 16,
@@ -709,14 +805,7 @@ export default function ProjectDetailPage() {
               />
               {(() => {
                 let callCounter = 0;
-                return items
-                  .filter(
-                    (it) =>
-                      it.type === "divider" ||
-                      (it.type === "call" &&
-                        (it.data as ExpertCall).formatted_output)
-                  )
-                  .map((it) => {
+                return formattedItems.map((it) => {
                     if (it.type === "divider") {
                       const div = it.data as SectionDivider;
                       return (
@@ -752,7 +841,6 @@ export default function ProjectDetailPage() {
                     }
                     const call = it.data as ExpertCall;
                     callCounter++;
-                    // Check if under a divider for indentation
                     const idx = items.indexOf(it);
                     let indented = false;
                     for (let i = idx - 1; i >= 0; i--) {
@@ -787,16 +875,19 @@ export default function ProjectDetailPage() {
                             marginLeft: 16,
                           }}
                         >
-                          {formatDate(call.call_date)}
+                          {callPageMap.get(call.id)}
                         </span>
                       </div>
                     );
                   });
               })()}
+              <div style={pageNumberStyle}>2</div>
             </div>
 
             {/* Call pages */}
-            {items.map((item) => {
+            {(() => {
+              let currentPage = 2;
+              return items.map((item) => {
               if (item.type === "divider") {
                 return (
                   <div
@@ -835,17 +926,11 @@ export default function ProjectDetailPage() {
               }
               const call = item.data as ExpertCall;
               if (!call.formatted_output) return null;
+              currentPage++;
               return (
                 <div
                   key={call.id}
-                  style={{
-                    background: "#ffffff",
-                    borderRadius: 4,
-                    boxShadow:
-                      "0 2px 8px rgba(0,0,0,0.12), 0 0 1px rgba(0,0,0,0.08)",
-                    padding: "48px 56px",
-                    marginTop: 24,
-                  }}
+                  style={pageStyle()}
                 >
                   <div
                     style={{
@@ -870,11 +955,14 @@ export default function ProjectDetailPage() {
                     {formatDate(call.call_date)}
                   </div>
                   {renderFormattedText(call.formatted_output)}
+                  <div style={pageNumberStyle}>{currentPage}</div>
                 </div>
               );
-            })}
+            });
+            })()}
           </div>
-        )}
+        );
+        })()}
 
         {/* Toolbar */}
         <div className="flex items-center gap-2 mb-5">

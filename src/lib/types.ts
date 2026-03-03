@@ -2,6 +2,8 @@ export interface Project {
   id: string;
   name: string;
   is_pinned: boolean;
+  export_title?: string | null;
+  export_subtitle?: string | null;
   created_by?: string | null;
   created_at: string;
   updated_at: string;
