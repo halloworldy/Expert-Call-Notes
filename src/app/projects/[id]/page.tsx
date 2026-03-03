@@ -550,10 +550,18 @@ export default function ProjectDetailPage() {
           </div>
         </div>
 
-        {/* Export settings */}
-        <details className="bg-white rounded-lg border border-slate-200 mb-5">
-          <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-slate-700 hover:text-slate-900">
-            Export Settings (customise document title and subtitle)
+        {/* Export Settings */}
+        <details className="group bg-white rounded-lg border border-slate-200 mb-3">
+          <summary className="cursor-pointer list-none px-4 py-3 flex items-center justify-between text-sm font-semibold text-slate-800 hover:bg-slate-50 rounded-lg transition-colors">
+            <span>Export Settings</span>
+            <svg
+              className="w-4 h-4 text-slate-400 transition-transform group-open:rotate-180"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
           </summary>
           <div className="px-4 pb-4 space-y-3 border-t border-slate-100 pt-3">
             <div>
@@ -589,19 +597,24 @@ export default function ProjectDetailPage() {
           </div>
         </details>
 
-        {/* Preview Document button - in main content area */}
-        <button
-          onClick={() => setShowPreview(!showPreview)}
-          className={`mb-5 px-4 py-2 rounded-lg text-sm font-medium transition-colors w-full text-left ${
-            showPreview
-              ? "bg-blue-700 text-white hover:bg-blue-800"
-              : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-blue-300"
-          }`}
+        {/* Document Preview */}
+        <details
+          className="group bg-white rounded-lg border border-slate-200 mb-5"
+          open={showPreview}
+          onToggle={(e) => setShowPreview((e.target as HTMLDetailsElement).open)}
         >
-          {showPreview
-            ? "Hide Document Preview"
-            : "Preview Document (see how your exported report will look)"}
-        </button>
+          <summary className="cursor-pointer list-none px-4 py-3 flex items-center justify-between text-sm font-semibold text-slate-800 hover:bg-slate-50 rounded-lg transition-colors">
+            <span>Document Preview</span>
+            <svg
+              className="w-4 h-4 text-slate-400 transition-transform group-open:rotate-180"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </summary>
+        </details>
 
         {/* Document Preview */}
         {showPreview && (
