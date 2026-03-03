@@ -1,4 +1,7 @@
 import { NextResponse } from "next/server";
+import PDFDocument from "pdfkit";
+
+export const runtime = "nodejs";
 
 interface CallData {
   expert_name: string;
@@ -6,12 +9,114 @@ interface CallData {
   formatted_output: string;
 }
 
-function escapeHtml(text: string): string {
+interface Section {
+  number: string;
+  header: string;
+  subBullets: SubBullet[];
+}
+
+interface SubBullet {
+  letter: string;
+  text: string;
+  romanItems: RomanItem[];
+}
+
+interface RomanItem {
+  numeral: string;
+  text: string;
+}
+
+function stripMarkdown(text: string): string {
   return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/\*{1,2}/g, "")
+    .replace(/_{1,2}/g, "")
+    .trim();
+}
+
+function parseFormattedOutput(text: string): Section[] {
+  const sections: Section[] = [];
+  const lines = text.split("\n");
+
+  let currentSection: Section | null = null;
+  let currentSubBullet: SubBullet | null = null;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+    if (!line.trim()) continue;
+
+    const cleanLine = stripMarkdown(line);
+
+    const numberedHeaderMatch = cleanLine.match(
+      /^\s*(?:#{1,3}\s+)?(\d+)\.\s+(.+)$/
+    );
+    const markdownHeaderMatch =
+      !numberedHeaderMatch && cleanLine.match(/^\s*#{1,3}\s+(.+)$/);
+
+    if (numberedHeaderMatch) {
+      if (currentSubBullet && currentSection) {
+        currentSection.subBullets.push(currentSubBullet);
+        currentSubBullet = null;
+      }
+      if (currentSection) sections.push(currentSection);
+      currentSection = {
+        number: numberedHeaderMatch[1],
+        header: numberedHeaderMatch[2].trim(),
+        subBullets: [],
+      };
+      continue;
+    }
+
+    if (markdownHeaderMatch) {
+      if (currentSubBullet && currentSection) {
+        currentSection.subBullets.push(currentSubBullet);
+        currentSubBullet = null;
+      }
+      if (currentSection) sections.push(currentSection);
+      currentSection = {
+        number: String(sections.length + 1),
+        header: markdownHeaderMatch[1].trim(),
+        subBullets: [],
+      };
+      continue;
+    }
+
+    const subBulletMatch = cleanLine.match(/^\s*([a-z])[.)]\s+(.+)$/);
+    if (subBulletMatch && currentSection) {
+      if (currentSubBullet) {
+        currentSection.subBullets.push(currentSubBullet);
+      }
+      currentSubBullet = {
+        letter: subBulletMatch[1],
+        text: subBulletMatch[2].trim(),
+        romanItems: [],
+      };
+      continue;
+    }
+
+    const romanMatch = cleanLine.match(
+      /^\s*(i{1,3}|iv|vi{0,3}|ix|x{0,3})[.)]\s+(.+)$/
+    );
+    if (romanMatch && currentSubBullet) {
+      currentSubBullet.romanItems.push({
+        numeral: romanMatch[1],
+        text: romanMatch[2].trim(),
+      });
+      continue;
+    }
+
+    if (currentSubBullet) {
+      currentSubBullet.text += " " + cleanLine;
+    } else if (currentSection) {
+      currentSection.header += " " + cleanLine;
+    }
+  }
+
+  if (currentSubBullet && currentSection) {
+    currentSection.subBullets.push(currentSubBullet);
+  }
+  if (currentSection) sections.push(currentSection);
+
+  return sections;
 }
 
 function formatDate(dateStr: string): string {
@@ -22,69 +127,6 @@ function formatDate(dateStr: string): string {
   });
 }
 
-function formatOutputToHtml(text: string): string {
-  const lines = text.split("\n");
-  let html = "";
-
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (!line) {
-      html += "<br/>";
-      continue;
-    }
-
-    // Escape HTML first, then apply formatting
-    let escaped = escapeHtml(line);
-    // Convert **bold** to <strong>
-    escaped = escaped.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-
-    // Remove leftover single asterisks/underscores for italic
-    const cleanLine = line.replace(/\*{1,2}/g, "").replace(/_{1,2}/g, "").trim();
-
-    // Numbered header: "1. Header" or "## 1. Header"
-    const headerMatch = cleanLine.match(/^(?:#{1,3}\s+)?(\d+)\.\s+(.+)$/);
-    if (headerMatch) {
-      html += `<h3 style="color:#1a365d; font-size:12pt; font-weight:600; margin:16px 0 8px 0;">${escapeHtml(headerMatch[1])}. ${escapeHtml(headerMatch[2])}</h3>\n`;
-      continue;
-    }
-
-    // Markdown header without number
-    const mdHeaderMatch = cleanLine.match(/^#{1,3}\s+(.+)$/);
-    if (mdHeaderMatch) {
-      html += `<h3 style="color:#1a365d; font-size:12pt; font-weight:600; margin:16px 0 8px 0;">${escapeHtml(mdHeaderMatch[1])}</h3>\n`;
-      continue;
-    }
-
-    // Lettered sub-bullet
-    const subMatch = cleanLine.match(/^([a-z])[.)]\s+(.+)$/);
-    if (subMatch) {
-      html += `<p style="margin:4px 0 4px 30px;"><strong>${escapeHtml(subMatch[1])}.</strong> ${escapeHtml(subMatch[2])}</p>\n`;
-      continue;
-    }
-
-    // Roman numeral
-    const romanMatch = cleanLine.match(
-      /^(i{1,3}|iv|vi{0,3}|ix|x{0,3})[.)]\s+(.+)$/
-    );
-    if (romanMatch) {
-      html += `<p style="margin:2px 0 2px 60px; color:#64748b;"><em>${escapeHtml(romanMatch[1])}.</em> ${escapeHtml(romanMatch[2])}</p>\n`;
-      continue;
-    }
-
-    // Bullet point
-    const bulletMatch = cleanLine.match(/^[-*]\s+(.+)$/);
-    if (bulletMatch) {
-      html += `<p style="margin:4px 0 4px 30px;">&bull; ${escapeHtml(bulletMatch[1])}</p>\n`;
-      continue;
-    }
-
-    // Regular text
-    html += `<p style="margin:4px 0;">${escaped}</p>\n`;
-  }
-
-  return html;
-}
-
 export async function POST(request: Request) {
   try {
     const { projectName, calls } = (await request.json()) as {
@@ -92,68 +134,205 @@ export async function POST(request: Request) {
       calls: CallData[];
     };
 
-    // Build TOC with hyperlinks
-    const contentsHtml = calls
-      .map(
-        (call: CallData, i: number) =>
-          `<li style="margin-bottom:8px; list-style:none; padding:6px 0; border-bottom:1px solid #e2e8f0;">
-            <a href="#call-${i}" style="color:#1a365d; text-decoration:none; display:flex; justify-content:space-between; align-items:baseline;">
-              <span><strong>${escapeHtml(call.expert_name)}</strong></span>
-              <span style="color:#64748b; font-size:10pt; margin-left:16px;">${formatDate(call.call_date)}</span>
-            </a>
-          </li>`
-      )
-      .join("\n");
+    const doc = new PDFDocument({
+      size: "A4",
+      margins: { top: 60, bottom: 60, left: 60, right: 60 },
+      info: {
+        Title: `${projectName} - Diligence Report`,
+        Author: "Expert Call Notes",
+      },
+      autoFirstPage: true,
+    });
 
-    // Build call sections with anchor IDs
-    const callsHtml = calls
-      .map(
-        (call: CallData, i: number) => `
-        <div id="call-${i}" style="page-break-before:always;">
-          <h2 style="color:#1a365d; border-bottom:2px solid #2d5899; padding-bottom:8px; margin-bottom:4px; font-size:16pt;">
-            ${escapeHtml(call.expert_name)}
-          </h2>
-          <p style="color:#64748b; font-size:10pt; font-style:italic; margin-bottom:20px;">
-            ${formatDate(call.call_date)}
-          </p>
-          <div style="font-size:11pt; line-height:1.7;">
-            ${formatOutputToHtml(call.formatted_output)}
-          </div>
-        </div>`
-      )
-      .join("\n");
+    const chunks: Uint8Array[] = [];
+    doc.on("data", (chunk: Uint8Array) => chunks.push(chunk));
 
-    const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-    body { font-family: 'Inter', Calibri, Arial, sans-serif; margin: 40px 50px; color: #0f172a; line-height: 1.6; }
-    h1 { color: #1a365d; font-size: 22pt; margin-bottom: 4px; }
-    h2 { color: #1a365d; font-size: 16pt; }
-    h3 { color: #1a365d; font-size: 13pt; margin-top: 20px; }
-    a { color: #1a365d; }
-    @media print {
-      a { color: #1a365d !important; text-decoration: none !important; }
-    }
-  </style>
-</head>
-<body>
-  <h1>${escapeHtml(projectName)}</h1>
-  <p style="color:#64748b; font-size:10pt; margin-bottom:30px;">Expert Call Diligence Report &mdash; ${formatDate(new Date().toISOString())}</p>
+    const pageWidth = 595.28;
+    const ml = 60;
+    const mr = 60;
+    const contentWidth = pageWidth - ml - mr;
 
-  <h3 style="color:#1a365d; border-bottom:1px solid #e2e8f0; padding-bottom:6px;">Contents</h3>
-  <ol style="padding-left:0; margin-top:12px;">${contentsHtml}</ol>
+    // ---- TITLE PAGE ----
+    doc.moveDown(10);
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(28)
+      .fillColor("#1a365d")
+      .text(projectName, ml, doc.y, { width: contentWidth, align: "center" });
+    doc.moveDown(0.8);
+    doc
+      .font("Helvetica")
+      .fontSize(14)
+      .fillColor("#64748b")
+      .text("Expert Call Diligence Report", ml, doc.y, {
+        width: contentWidth,
+        align: "center",
+      });
+    doc.moveDown(0.4);
+    doc
+      .font("Helvetica")
+      .fontSize(11)
+      .fillColor("#94a3b8")
+      .text(formatDate(new Date().toISOString()), ml, doc.y, {
+        width: contentWidth,
+        align: "center",
+      });
 
-  ${callsHtml}
-</body>
-</html>`;
+    // ---- TABLE OF CONTENTS ----
+    doc.addPage();
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(20)
+      .fillColor("#1a365d")
+      .text("Table of Contents", ml, doc.y, { width: contentWidth });
+    doc.moveDown(0.3);
 
-    return new NextResponse(html, {
+    // Thin rule under heading
+    doc
+      .moveTo(ml, doc.y)
+      .lineTo(pageWidth - mr, doc.y)
+      .strokeColor("#e2e8f0")
+      .lineWidth(0.5)
+      .stroke();
+    doc.moveDown(0.8);
+
+    calls.forEach((call, i) => {
+      const tocY = doc.y;
+      doc
+        .font("Helvetica")
+        .fontSize(11)
+        .fillColor("#1a365d")
+        .text(`${i + 1}. `, ml, tocY, { continued: true, goTo: `call-${i}` });
+      doc
+        .font("Helvetica-Bold")
+        .fontSize(11)
+        .fillColor("#1a365d")
+        .text(call.expert_name, { continued: true, goTo: `call-${i}` });
+      doc
+        .font("Helvetica")
+        .fontSize(9)
+        .fillColor("#94a3b8")
+        .text(`   ${formatDate(call.call_date)}`, { goTo: `call-${i}` });
+      doc.moveDown(0.4);
+    });
+
+    // ---- CALL SECTIONS ----
+    calls.forEach((call, i) => {
+      doc.addPage();
+      doc.addNamedDestination(`call-${i}`);
+
+      // Call header
+      doc
+        .font("Helvetica-Bold")
+        .fontSize(17)
+        .fillColor("#1a365d")
+        .text(call.expert_name, ml, doc.y, { width: contentWidth });
+
+      // Rule under header
+      const ruleY = doc.y + 4;
+      doc
+        .moveTo(ml, ruleY)
+        .lineTo(pageWidth - mr, ruleY)
+        .strokeColor("#2d5899")
+        .lineWidth(1.5)
+        .stroke();
+      doc.y = ruleY + 8;
+
+      // Date
+      doc
+        .font("Helvetica-Oblique")
+        .fontSize(9)
+        .fillColor("#94a3b8")
+        .text(formatDate(call.call_date), ml, doc.y, { width: contentWidth });
+      doc.moveDown(1);
+
+      // Formatted content
+      const sections = parseFormattedOutput(call.formatted_output);
+
+      if (sections.length > 0) {
+        for (const section of sections) {
+          // Section header
+          doc
+            .font("Helvetica-Bold")
+            .fontSize(11)
+            .fillColor("#1a365d")
+            .text(`${section.number}. ${section.header}`, ml, doc.y, {
+              width: contentWidth,
+            });
+          doc.moveDown(0.3);
+
+          // Sub-bullets
+          for (const sub of section.subBullets) {
+            const subX = ml + 25;
+            const subWidth = contentWidth - 25;
+
+            // Render letter bold then text regular on same line
+            doc
+              .font("Helvetica-Bold")
+              .fontSize(10)
+              .fillColor("#0f172a")
+              .text(`${sub.letter}. `, subX, doc.y, {
+                continued: true,
+                width: subWidth,
+              });
+            doc
+              .font("Helvetica")
+              .fontSize(10)
+              .fillColor("#0f172a")
+              .text(sub.text, { width: subWidth });
+            doc.moveDown(0.15);
+
+            // Roman numerals
+            for (const roman of sub.romanItems) {
+              const romX = ml + 50;
+              const romWidth = contentWidth - 50;
+
+              doc
+                .font("Helvetica-Oblique")
+                .fontSize(10)
+                .fillColor("#64748b")
+                .text(`${roman.numeral}. `, romX, doc.y, {
+                  continued: true,
+                  width: romWidth,
+                });
+              doc
+                .font("Helvetica")
+                .fontSize(10)
+                .fillColor("#334155")
+                .text(roman.text, { width: romWidth });
+              doc.moveDown(0.1);
+            }
+          }
+          doc.moveDown(0.5);
+        }
+      } else {
+        // Fallback: render as plain paragraphs
+        const lines = call.formatted_output.split("\n");
+        for (const rawLine of lines) {
+          const trimmed = rawLine.trim();
+          if (!trimmed) {
+            doc.moveDown(0.3);
+            continue;
+          }
+          doc
+            .font("Helvetica")
+            .fontSize(10)
+            .fillColor("#0f172a")
+            .text(trimmed, ml, doc.y, { width: contentWidth });
+          doc.moveDown(0.1);
+        }
+      }
+    });
+
+    const pdfBuffer = await new Promise<Buffer>((resolve) => {
+      doc.on("end", () => resolve(Buffer.concat(chunks)));
+      doc.end();
+    });
+
+    return new Response(pdfBuffer as unknown as BodyInit, {
       headers: {
-        "Content-Type": "text/html",
-        "Content-Disposition": `attachment; filename="${projectName.replace(/\s+/g, "_")}_Diligence.html"`,
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename="${projectName.replace(/\s+/g, "_")}_Diligence.pdf"`,
       },
     });
   } catch (error) {

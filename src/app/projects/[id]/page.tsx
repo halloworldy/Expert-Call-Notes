@@ -338,13 +338,15 @@ export default function ProjectDetailPage() {
         }),
       });
       if (response.ok) {
-        const html = await response.text();
-        const printWindow = window.open("", "_blank");
-        if (printWindow) {
-          printWindow.document.write(html);
-          printWindow.document.close();
-          setTimeout(() => printWindow.print(), 500);
-        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${project!.name.replace(/\s+/g, "_")}_Diligence.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
       }
     } catch (err) {
       console.error("PDF export failed:", err);
@@ -656,7 +658,7 @@ export default function ProjectDetailPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">
-                    Expert Name
+                    Call Title
                   </label>
                   <input
                     type="text"
@@ -664,7 +666,7 @@ export default function ProjectDetailPage() {
                     onChange={(e) => setExpertName(e.target.value)}
                     required
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                    placeholder="e.g. Dr. John Smith"
+                    placeholder='e.g., "Name - Company - Position"'
                   />
                 </div>
                 <div>
@@ -689,7 +691,7 @@ export default function ProjectDetailPage() {
                   onChange={(e) => setRawNotes(e.target.value)}
                   required
                   rows={6}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-xs"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs input-font"
                   placeholder="Paste your rough notes here..."
                 />
               </div>
@@ -701,7 +703,7 @@ export default function ProjectDetailPage() {
                   value={transcript}
                   onChange={(e) => setTranscript(e.target.value)}
                   rows={4}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-xs"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs input-font"
                   placeholder="Paste transcript if available..."
                 />
               </div>
@@ -715,7 +717,7 @@ export default function ProjectDetailPage() {
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
                   rows={10}
-                  className="w-full mt-2 px-3 py-2 border border-slate-200 rounded-lg font-mono text-xs"
+                  className="w-full mt-2 px-3 py-2 border border-slate-200 rounded-lg text-xs input-font"
                 />
               </details>
 
@@ -829,7 +831,7 @@ export default function ProjectDetailPage() {
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <label className="block text-xs font-medium text-slate-500 mb-1">
-                            Expert Name
+                            Call Title
                           </label>
                           <input
                             type="text"
@@ -873,7 +875,7 @@ export default function ProjectDetailPage() {
                             })
                           }
                           rows={5}
-                          className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono text-xs"
+                          className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs input-font"
                         />
                       </div>
                       <div>
@@ -889,7 +891,7 @@ export default function ProjectDetailPage() {
                             })
                           }
                           rows={3}
-                          className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono text-xs"
+                          className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs input-font"
                         />
                       </div>
                       {editForm.formatted_output && (
@@ -906,7 +908,7 @@ export default function ProjectDetailPage() {
                               })
                             }
                             rows={10}
-                            className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono text-xs"
+                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs input-font"
                           />
                         </div>
                       )}
@@ -1013,7 +1015,7 @@ export default function ProjectDetailPage() {
                             value={prompt}
                             onChange={(e) => setPrompt(e.target.value)}
                             rows={8}
-                            className="w-full mt-2 px-3 py-2 border border-slate-200 rounded-lg font-mono text-xs"
+                            className="w-full mt-2 px-3 py-2 border border-slate-200 rounded-lg text-xs input-font"
                           />
                         </details>
                       </div>

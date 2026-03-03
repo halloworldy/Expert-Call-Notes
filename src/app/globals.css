@@ -25,6 +25,11 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Input / textarea font */
+.input-font {
+  font-family: Arial, Calibri, "Segoe UI", sans-serif;
+}
+
 /* Drag and drop styles */
 .drag-handle {
   cursor: grab;
@@ -54,7 +59,7 @@ body {
 
 /* Preview document styles */
 .preview-doc {
-  font-family: "Calibri", "Inter", sans-serif;
+  font-family: "Segoe UI", Arial, Calibri, sans-serif;
   line-height: 1.6;
 }
 .preview-doc h1 {
