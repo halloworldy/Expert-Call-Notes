@@ -50,16 +50,6 @@ function renderFormattedText(text: string) {
       );
       return;
     }
-    const subMatch = clean.match(/^([a-z])[.)]\s+(.+)$/);
-    if (subMatch) {
-      elements.push(
-        <div key={i} className="ml-6 my-0.5 text-black text-sm">
-          <span className="font-medium">{subMatch[1]}.</span>{" "}
-          {subMatch[2]}
-        </div>
-      );
-      return;
-    }
     const romanMatch = clean.match(
       /^(i{1,3}|iv|vi{0,3}|ix|x{0,3})[.)]\s+(.+)$/
     );
@@ -68,6 +58,16 @@ function renderFormattedText(text: string) {
         <div key={i} className="ml-12 my-0.5 text-black text-sm">
           {romanMatch[1]}.{" "}
           {romanMatch[2]}
+        </div>
+      );
+      return;
+    }
+    const subMatch = clean.match(/^([a-z])[.)]\s+(.+)$/);
+    if (subMatch) {
+      elements.push(
+        <div key={i} className="ml-6 my-0.5 text-black text-sm">
+          <span className="font-medium">{subMatch[1]}.</span>{" "}
+          {subMatch[2]}
         </div>
       );
       return;

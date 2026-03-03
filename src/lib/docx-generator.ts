@@ -80,6 +80,17 @@ function parseFormattedOutput(text: string): Section[] {
       continue;
     }
 
+    const romanMatch = cleanLine.match(
+      /^\s*(i{1,3}|iv|vi{0,3}|ix|x{0,3})[.)]\s+(.+)$/
+    );
+    if (romanMatch && currentSubBullet) {
+      currentSubBullet.romanItems.push({
+        numeral: romanMatch[1],
+        text: romanMatch[2].trim(),
+      });
+      continue;
+    }
+
     const subBulletMatch = cleanLine.match(/^\s*([a-z])[.)]\s+(.+)$/);
     if (subBulletMatch && currentSection) {
       if (currentSubBullet) {
@@ -90,17 +101,6 @@ function parseFormattedOutput(text: string): Section[] {
         text: subBulletMatch[2].trim(),
         romanItems: [],
       };
-      continue;
-    }
-
-    const romanMatch = cleanLine.match(
-      /^\s*(i{1,3}|iv|vi{0,3}|ix|x{0,3})[.)]\s+(.+)$/
-    );
-    if (romanMatch && currentSubBullet) {
-      currentSubBullet.romanItems.push({
-        numeral: romanMatch[1],
-        text: romanMatch[2].trim(),
-      });
       continue;
     }
 
@@ -154,10 +154,10 @@ function renderFallbackParagraphs(text: string): Paragraph[] {
           before: isHeader ? 200 : 60,
           after: isHeader ? 100 : 60,
         },
-        indent: /^\s*[a-z][.)]\s/.test(trimmed)
-          ? { left: 720 }
-          : /^\s*(i{1,3}|iv|vi{0,3})[.)]\s/.test(trimmed)
-            ? { left: 1440 }
+        indent: /^\s*(i{1,3}|iv|vi{0,3}|ix|x{0,3})[.)]\s/.test(trimmed)
+          ? { left: 1440 }
+          : /^\s*[a-z][.)]\s/.test(trimmed)
+            ? { left: 720 }
             : undefined,
         children: [
           new TextRun({

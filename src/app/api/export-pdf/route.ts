@@ -80,6 +80,17 @@ function parseFormattedOutput(text: string): Section[] {
       continue;
     }
 
+    const romanMatch = cleanLine.match(
+      /^\s*(i{1,3}|iv|vi{0,3}|ix|x{0,3})[.)]\s+(.+)$/
+    );
+    if (romanMatch && currentSubBullet) {
+      currentSubBullet.romanItems.push({
+        numeral: romanMatch[1],
+        text: romanMatch[2].trim(),
+      });
+      continue;
+    }
+
     const subBulletMatch = cleanLine.match(/^\s*([a-z])[.)]\s+(.+)$/);
     if (subBulletMatch && currentSection) {
       if (currentSubBullet) {
@@ -90,17 +101,6 @@ function parseFormattedOutput(text: string): Section[] {
         text: subBulletMatch[2].trim(),
         romanItems: [],
       };
-      continue;
-    }
-
-    const romanMatch = cleanLine.match(
-      /^\s*(i{1,3}|iv|vi{0,3}|ix|x{0,3})[.)]\s+(.+)$/
-    );
-    if (romanMatch && currentSubBullet) {
-      currentSubBullet.romanItems.push({
-        numeral: romanMatch[1],
-        text: romanMatch[2].trim(),
-      });
       continue;
     }
 
