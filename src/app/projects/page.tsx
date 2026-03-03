@@ -10,6 +10,7 @@ export default function ProjectsPage() {
   const [newName, setNewName] = useState("");
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const supabase = createClient();
 
@@ -46,6 +47,16 @@ export default function ProjectsPage() {
     setCreating(false);
   }
 
+  async function togglePin(e: React.MouseEvent, projectId: string, currentlyPinned: boolean) {
+    e.preventDefault();
+    e.stopPropagation();
+    await supabase
+      .from("projects")
+      .update({ is_pinned: !currentlyPinned })
+      .eq("id", projectId);
+    loadProjects();
+  }
+
   function formatDate(dateStr: string) {
     return new Date(dateStr).toLocaleDateString("en-US", {
       month: "short",
@@ -56,21 +67,44 @@ export default function ProjectsPage() {
     });
   }
 
+  // Filter by search then sort: pinned first, then by updated_at
+  const filteredProjects = projects
+    .filter((p) =>
+      p.name.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+    .sort((a, b) => {
+      if (a.is_pinned && !b.is_pinned) return -1;
+      if (!a.is_pinned && b.is_pinned) return 1;
+      return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+    });
+
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200">
+    <div className="min-h-screen bg-slate-50">
+      <header className="bg-slate-900 border-b border-slate-700">
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
-          <h1 className="text-xl font-bold text-gray-900">
+          <h1 className="text-lg font-semibold text-white tracking-tight">
             PE Diligence Notes
           </h1>
         </div>
       </header>
 
       <main className="max-w-5xl mx-auto px-6 py-8">
-        <div className="flex items-center justify-between mb-8">
-          <h2 className="text-2xl font-semibold text-gray-900">Projects</h2>
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-xl font-semibold text-slate-900">Projects</h2>
         </div>
 
+        {/* Search */}
+        <div className="mb-5">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search projects..."
+            className="w-full px-4 py-2.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white text-sm text-slate-900 placeholder-slate-400"
+          />
+        </div>
+
+        {/* Create project */}
         <form
           onSubmit={createProject}
           className="mb-8 flex items-center gap-3"
@@ -80,43 +114,62 @@ export default function ProjectsPage() {
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             placeholder="New project name"
-            className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            className="flex-1 px-4 py-2.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white text-sm"
           />
           <button
             type="submit"
             disabled={creating || !newName.trim()}
-            className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium"
+            className="px-5 py-2.5 bg-blue-700 text-white rounded-lg hover:bg-blue-800 disabled:opacity-50 text-sm font-medium transition-colors"
           >
             {creating ? "Creating..." : "Create Project"}
           </button>
         </form>
 
         {loading ? (
-          <p className="text-gray-500">Loading projects...</p>
-        ) : projects.length === 0 ? (
-          <div className="text-center py-16 text-gray-500">
-            <p className="text-lg mb-2">No projects yet</p>
-            <p className="text-sm">
-              Create your first project to start managing expert calls.
-            </p>
+          <p className="text-slate-500 text-sm">Loading projects...</p>
+        ) : filteredProjects.length === 0 ? (
+          <div className="text-center py-16 text-slate-500">
+            {searchQuery ? (
+              <p className="text-sm">No projects match &ldquo;{searchQuery}&rdquo;</p>
+            ) : (
+              <>
+                <p className="text-base mb-2">No projects yet</p>
+                <p className="text-sm">
+                  Create your first project to start managing expert calls.
+                </p>
+              </>
+            )}
           </div>
         ) : (
-          <div className="space-y-3">
-            {projects.map((project) => (
+          <div className="space-y-2">
+            {filteredProjects.map((project) => (
               <Link
                 key={project.id}
                 href={`/projects/${project.id}`}
-                className="block bg-white rounded-lg border border-gray-200 p-5 hover:border-blue-300 hover:shadow-sm transition-all"
+                className="block bg-white rounded-lg border border-slate-200 p-4 hover:border-blue-300 hover:shadow-sm transition-all group"
               >
                 <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-medium text-gray-900">
-                    {project.name}
-                  </h3>
-                  <span className="text-sm text-gray-500">
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={(e) => togglePin(e, project.id, project.is_pinned)}
+                      className={`text-lg transition-colors ${
+                        project.is_pinned
+                          ? "text-blue-600"
+                          : "text-slate-300 hover:text-slate-400"
+                      }`}
+                      title={project.is_pinned ? "Unpin project" : "Pin project"}
+                    >
+                      {project.is_pinned ? "\u{1F4CC}" : "\u{1F4CC}"}
+                    </button>
+                    <h3 className="text-sm font-medium text-slate-900">
+                      {project.name}
+                    </h3>
+                  </div>
+                  <span className="text-xs text-slate-400">
                     Updated {formatDate(project.updated_at)}
                   </span>
                 </div>
-                <p className="text-sm text-gray-500 mt-1">
+                <p className="text-xs text-slate-400 mt-1 ml-8">
                   Created {formatDate(project.created_at)}
                 </p>
               </Link>
