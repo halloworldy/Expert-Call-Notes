@@ -59,27 +59,49 @@ body {
 
 /* Page break indicator in preview */
 .page-break-indicator {
-  position: relative;
-  margin: 24px 0;
-  border-top: 2px dashed #cbd5e1;
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 20px 0;
+}
+.page-break-indicator::before,
+.page-break-indicator::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    #94a3b8 30%,
+    #94a3b8 70%,
+    transparent
+  );
+}
+.page-break-indicator::before {
+  content: "";
 }
 .page-break-indicator::after {
-  content: "PAGE BREAK";
-  position: relative;
-  top: -10px;
-  background: #ffffff;
-  padding: 0 12px;
-  font-size: 10px;
-  font-weight: 600;
-  color: #94a3b8;
-  letter-spacing: 0.1em;
+  content: "";
 }
 
 /* Preview document styles */
 .preview-doc {
   font-family: "Segoe UI", Arial, Calibri, sans-serif;
   line-height: 1.6;
+  background: #e2e8f0;
+  padding: 32px !important;
+  border-radius: 8px;
+}
+.preview-page {
+  background: #ffffff;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1), 0 0 1px rgba(0, 0, 0, 0.08);
+  padding: 48px 56px;
+  position: relative;
+}
+.preview-page + .preview-page {
+  margin-top: 24px;
 }
 .preview-doc h1 {
   color: var(--primary);

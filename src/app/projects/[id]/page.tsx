@@ -605,16 +605,17 @@ export default function ProjectDetailPage() {
 
         {/* Document Preview */}
         {showPreview && (
-          <div className="bg-white rounded-lg border border-slate-200 p-8 mb-5 preview-doc">
+          <div className="rounded-lg border border-slate-300 mb-5 preview-doc">
             {/* Title Page */}
-            <div className="text-center mb-8 py-12 border-2 border-dashed border-slate-200 rounded-lg bg-slate-50/50">
-              <h1 className="text-2xl font-bold text-slate-900 border-0 pb-0 mb-2">
+            <div className="preview-page flex flex-col items-center justify-center" style={{ minHeight: 320 }}>
+              <h1 className="text-2xl font-bold border-0 pb-0 mb-3" style={{ color: "#1a365d" }}>
                 {exportTitle || project.name}
               </h1>
-              <p className="text-slate-500 text-sm">
+              <div className="w-24 border-t-2 mb-3" style={{ borderColor: "#2d5899" }} />
+              <p className="text-sm" style={{ color: "#64748b" }}>
                 {exportSubtitle || "Expert Call Diligence Report"}
               </p>
-              <p className="text-slate-400 text-xs mt-1">
+              <p className="text-xs mt-2" style={{ color: "#94a3b8" }}>
                 {new Date().toLocaleDateString("en-US", {
                   month: "long",
                   day: "numeric",
@@ -623,15 +624,13 @@ export default function ProjectDetailPage() {
               </p>
             </div>
 
-            {/* Page break indicator */}
-            <div className="page-break-indicator" />
-
             {/* Table of Contents Page */}
-            <div className="border-2 border-dashed border-slate-200 rounded-lg bg-slate-50/50 p-6 mb-0">
-              <h2 className="font-semibold text-slate-900 mb-3 text-base">
+            <div className="preview-page">
+              <h2 className="font-bold text-base mb-1" style={{ color: "#1a365d" }}>
                 Table of Contents
               </h2>
-              <div className="mb-2">
+              <div className="border-t mb-4" style={{ borderColor: "#2d5899" }} />
+              <div>
                 {items
                   .filter(
                     (it) =>
@@ -643,15 +642,19 @@ export default function ProjectDetailPage() {
                     return (
                       <div
                         key={call.id}
-                        className="flex justify-between items-baseline py-1.5 border-b border-slate-100 text-sm"
+                        className="flex justify-between items-baseline py-2 border-b text-sm"
+                        style={{ borderColor: "#eef1f5" }}
                       >
-                        <span className="text-slate-800">
+                        <span className="text-slate-900">
                           {idx + 1}.{" "}
                           <span className="font-medium">
                             {call.expert_name}
                           </span>
                         </span>
-                        <span className="text-slate-400 text-xs">
+                        <span
+                          className="text-xs ml-4 tabular-nums"
+                          style={{ color: "#94a3b8" }}
+                        >
                           {formatDate(call.call_date)}
                         </span>
                       </div>
@@ -665,32 +668,28 @@ export default function ProjectDetailPage() {
                 return (
                   <div
                     key={item.data.id}
-                    className="flex items-center gap-3 my-6"
+                    className="preview-page flex items-center gap-4"
+                    style={{ minHeight: "auto", padding: "20px 56px" }}
                   >
-                    <div className="flex-1 border-t border-slate-300" />
-                    <span className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                    <div className="flex-1 border-t-2 border-slate-300" />
+                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-widest">
                       {(item.data as SectionDivider).label}
                     </span>
-                    <div className="flex-1 border-t border-slate-300" />
+                    <div className="flex-1 border-t-2 border-slate-300" />
                   </div>
                 );
               }
               const call = item.data as ExpertCall;
               if (!call.formatted_output) return null;
               return (
-                <div key={call.id}>
-                  {/* Page break indicator */}
-                  <div className="page-break-indicator" />
-                  {/* Call page */}
-                  <div className="border-2 border-dashed border-slate-200 rounded-lg bg-slate-50/50 p-6">
-                    <h1 className="text-lg font-bold text-slate-900 border-b-2 border-blue-800 pb-2 mb-1">
-                      {call.expert_name}
-                    </h1>
-                    <p className="text-slate-400 text-xs italic mb-4">
-                      {formatDate(call.call_date)}
-                    </p>
-                    {renderFormattedText(call.formatted_output)}
-                  </div>
+                <div key={call.id} className="preview-page">
+                  <h1 className="text-lg font-bold pb-2 mb-1" style={{ color: "#1a365d", borderBottom: "2px solid #2d5899" }}>
+                    {call.expert_name}
+                  </h1>
+                  <p className="text-xs italic mb-5" style={{ color: "#94a3b8" }}>
+                    {formatDate(call.call_date)}
+                  </p>
+                  {renderFormattedText(call.formatted_output)}
                 </div>
               );
             })}
