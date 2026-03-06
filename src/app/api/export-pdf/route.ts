@@ -40,16 +40,18 @@ function stripMarkdown(text: string): string {
     .trim();
 }
 
-// Render text with inline formatting (bold, italic, underline) using PDFKit
+// Render text with inline formatting (bold, italic, underline) using PDFKit.
+// Accepts an optional prefix (e.g. "• " or "a. ") to avoid broken continued:true chaining.
 function renderFormattedPdfText(
   doc: PDFKit.PDFDocument,
   text: string,
   x: number,
-  options: { width: number; fontSize?: number; baseFont?: string; color?: string }
+  options: { width: number; fontSize?: number; baseFont?: string; color?: string; prefix?: string }
 ) {
   const fontSize = options.fontSize || 10;
   const baseFont = options.baseFont || "Helvetica";
   const color = options.color || "#000000";
+  const prefix = options.prefix || "";
   const regex = /(\*\*(.+?)\*\*)|(_(.+?)_)|(<u>(.+?)<\/u>)/g;
   let lastIndex = 0;
   let match;
@@ -72,23 +74,33 @@ function renderFormattedPdfText(
     segments.push({ text: text.slice(lastIndex) });
   }
 
-  // If no formatting found, render plain
-  if (segments.length <= 1 && !segments[0]?.bold && !segments[0]?.italic && !segments[0]?.underline) {
-    doc.font(baseFont).fontSize(fontSize).fillColor(color).text(text, x, doc.y, { width: options.width });
+  // No formatting markers found — render as plain text
+  if (segments.length === 0 || (segments.length === 1 && !segments[0].bold && !segments[0].italic && !segments[0].underline)) {
+    const plainText = prefix + (segments.length > 0 ? segments[0].text : text);
+    doc.font(baseFont).fontSize(fontSize).fillColor(color)
+      .text(plainText, x, doc.y, { width: options.width });
     return;
   }
 
-  // Render segments with continued:true
+  // Has formatting — prepend prefix as a plain segment
+  if (prefix) {
+    segments.unshift({ text: prefix });
+  }
+
   segments.forEach((seg, i) => {
     const isLast = i === segments.length - 1;
     let font = baseFont;
     if (seg.bold) font = "Helvetica-Bold";
     else if (seg.italic) font = "Helvetica-Oblique";
     doc.font(font).fontSize(fontSize).fillColor(color);
-    if (seg.underline) {
-      doc.text(seg.text, x, doc.y, { width: options.width, continued: !isLast, underline: true });
+    const opts: Record<string, unknown> = { width: options.width, continued: !isLast };
+    if (seg.underline) opts.underline = true;
+    if (i === 0) {
+      // First segment: explicit x,y positioning
+      doc.text(seg.text, x, doc.y, opts);
     } else {
-      doc.text(seg.text, !isLast ? undefined : x, doc.y, { width: options.width, continued: !isLast });
+      // Continuation segments: no x,y, just options
+      doc.text(seg.text, opts);
     }
   });
 }
@@ -111,6 +123,7 @@ function parseFormattedOutput(text: string): {
     const line = rawLine.trimEnd();
     if (!line.trim()) continue;
 
+    const trimmedLine = line.trim(); // preserves formatting markers
     const cleanLine = stripMarkdown(line);
 
     if (cleanLine.match(/^Background\s*$/i)) {
@@ -132,16 +145,18 @@ function parseFormattedOutput(text: string): {
       const bgBulletMatch = cleanLine.match(/^\*\s+(.+)$/);
       if (bgBulletMatch) {
         if (currentBgBullet) background.push(currentBgBullet);
-        currentBgBullet = { text: bgBulletMatch[1], subItems: [] };
+        const rawText = trimmedLine.replace(/^\*\s+/, "");
+        currentBgBullet = { text: rawText, subItems: [] };
         continue;
       }
       const bgSubMatch = cleanLine.match(/^\s*o\s+(.+)$/);
       if (bgSubMatch && currentBgBullet) {
-        currentBgBullet.subItems.push(bgSubMatch[1]);
+        const rawSubText = trimmedLine.replace(/^\s*o\s+/, "");
+        currentBgBullet.subItems.push(rawSubText);
         continue;
       }
       if (currentBgBullet) {
-        currentBgBullet.text += " " + cleanLine;
+        currentBgBullet.text += " " + trimmedLine;
       }
       continue;
     }
@@ -158,9 +173,10 @@ function parseFormattedOutput(text: string): {
         currentSubBullet = null;
       }
       if (currentSection) sections.push(currentSection);
+      const rawHeader = trimmedLine.replace(/^\s*(?:#{1,3}\s+)?\d+\.\s+/, "");
       currentSection = {
         number: numberedHeaderMatch[1],
-        header: numberedHeaderMatch[2].trim(),
+        header: rawHeader,
         subBullets: [],
       };
       if (!inSummary) inSummary = true;
@@ -173,9 +189,10 @@ function parseFormattedOutput(text: string): {
         currentSubBullet = null;
       }
       if (currentSection) sections.push(currentSection);
+      const rawHeader = trimmedLine.replace(/^\s*#{1,3}\s+/, "");
       currentSection = {
         number: String(sections.length + 1),
-        header: markdownHeaderMatch[1].trim(),
+        header: rawHeader,
         subBullets: [],
       };
       continue;
@@ -185,9 +202,10 @@ function parseFormattedOutput(text: string): {
       /^\s*(i{1,3}|iv|vi{0,3}|ix|x{0,3})[.)]\s+(.+)$/
     );
     if (romanMatch && currentSubBullet) {
+      const rawRomanText = trimmedLine.replace(/^\s*(i{1,3}|iv|vi{0,3}|ix|x{0,3})[.)]\s+/, "");
       currentSubBullet.romanItems.push({
         numeral: romanMatch[1],
-        text: romanMatch[2].trim(),
+        text: rawRomanText,
       });
       continue;
     }
@@ -197,18 +215,19 @@ function parseFormattedOutput(text: string): {
       if (currentSubBullet) {
         currentSection.subBullets.push(currentSubBullet);
       }
+      const rawSubText = trimmedLine.replace(/^\s*[a-z][.)]\s+/, "");
       currentSubBullet = {
         letter: subBulletMatch[1],
-        text: subBulletMatch[2].trim(),
+        text: rawSubText,
         romanItems: [],
       };
       continue;
     }
 
     if (currentSubBullet) {
-      currentSubBullet.text += " " + cleanLine;
+      currentSubBullet.text += " " + trimmedLine;
     } else if (currentSection) {
-      currentSection.header += " " + cleanLine;
+      currentSection.header += " " + trimmedLine;
     }
   }
 
@@ -400,15 +419,11 @@ export async function POST(request: Request) {
         doc.moveDown(0.4);
 
         for (const bullet of background) {
-          doc.font("Helvetica").fontSize(10).fillColor("#000000")
-            .text("\u2022 ", ml + 15, doc.y, { width: contentWidth - 15, continued: true });
-          renderFormattedPdfText(doc, bullet.text, ml + 15, { width: contentWidth - 15 });
+          renderFormattedPdfText(doc, bullet.text, ml + 15, { width: contentWidth - 15, prefix: "\u2022 " });
           doc.moveDown(0.15);
 
           for (const sub of bullet.subItems) {
-            doc.font("Helvetica").fontSize(10).fillColor("#000000")
-              .text("o ", ml + 35, doc.y, { width: contentWidth - 35, continued: true });
-            renderFormattedPdfText(doc, sub, ml + 35, { width: contentWidth - 35 });
+            renderFormattedPdfText(doc, sub, ml + 35, { width: contentWidth - 35, prefix: "o " });
             doc.moveDown(0.1);
           }
         }
@@ -440,18 +455,14 @@ export async function POST(request: Request) {
             const subX = ml + 25;
             const subWidth = contentWidth - 25;
 
-            doc.font("Helvetica").fontSize(10).fillColor("#000000")
-              .text(`${sub.letter}. `, subX, doc.y, { width: subWidth, continued: true });
-            renderFormattedPdfText(doc, sub.text, subX, { width: subWidth });
+            renderFormattedPdfText(doc, sub.text, subX, { width: subWidth, prefix: `${sub.letter}. ` });
             doc.moveDown(0.15);
 
             for (const roman of sub.romanItems) {
               const romX = ml + 50;
               const romWidth = contentWidth - 50;
 
-              doc.font("Helvetica").fontSize(10).fillColor("#000000")
-                .text(`${roman.numeral}. `, romX, doc.y, { width: romWidth, continued: true });
-              renderFormattedPdfText(doc, roman.text, romX, { width: romWidth });
+              renderFormattedPdfText(doc, roman.text, romX, { width: romWidth, prefix: `${roman.numeral}. ` });
               doc.moveDown(0.1);
             }
           }

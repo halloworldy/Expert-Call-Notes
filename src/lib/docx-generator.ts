@@ -87,6 +87,7 @@ function parseFormattedOutput(text: string): {
     const line = rawLine.trimEnd();
     if (!line.trim()) continue;
 
+    const trimmedLine = line.trim(); // preserves formatting markers
     const cleanLine = stripMarkdown(line);
 
     // Detect section headers
@@ -110,17 +111,20 @@ function parseFormattedOutput(text: string): {
       const bgBulletMatch = cleanLine.match(/^\*\s+(.+)$/);
       if (bgBulletMatch) {
         if (currentBgBullet) background.push(currentBgBullet);
-        currentBgBullet = { text: bgBulletMatch[1], subItems: [] };
+        // Extract raw text preserving inline formatting markers
+        const rawText = trimmedLine.replace(/^\*\s+/, "");
+        currentBgBullet = { text: rawText, subItems: [] };
         continue;
       }
       const bgSubMatch = cleanLine.match(/^\s*o\s+(.+)$/);
       if (bgSubMatch && currentBgBullet) {
-        currentBgBullet.subItems.push(bgSubMatch[1]);
+        const rawSubText = trimmedLine.replace(/^\s*o\s+/, "");
+        currentBgBullet.subItems.push(rawSubText);
         continue;
       }
       // Continuation line
       if (currentBgBullet) {
-        currentBgBullet.text += " " + cleanLine;
+        currentBgBullet.text += " " + trimmedLine;
       }
       continue;
     }
@@ -138,9 +142,10 @@ function parseFormattedOutput(text: string): {
         currentSubBullet = null;
       }
       if (currentSection) sections.push(currentSection);
+      const rawHeader = trimmedLine.replace(/^\s*(?:#{1,3}\s+)?\d+\.\s+/, "");
       currentSection = {
         number: numberedHeaderMatch[1],
-        header: numberedHeaderMatch[2].trim(),
+        header: rawHeader,
         subBullets: [],
       };
       if (!inSummary) inSummary = true;
@@ -153,9 +158,10 @@ function parseFormattedOutput(text: string): {
         currentSubBullet = null;
       }
       if (currentSection) sections.push(currentSection);
+      const rawHeader = trimmedLine.replace(/^\s*#{1,3}\s+/, "");
       currentSection = {
         number: String(sections.length + 1),
-        header: markdownHeaderMatch[1].trim(),
+        header: rawHeader,
         subBullets: [],
       };
       continue;
@@ -165,9 +171,10 @@ function parseFormattedOutput(text: string): {
       /^\s*(i{1,3}|iv|vi{0,3}|ix|x{0,3})[.)]\s+(.+)$/
     );
     if (romanMatch && currentSubBullet) {
+      const rawRomanText = trimmedLine.replace(/^\s*(i{1,3}|iv|vi{0,3}|ix|x{0,3})[.)]\s+/, "");
       currentSubBullet.romanItems.push({
         numeral: romanMatch[1],
-        text: romanMatch[2].trim(),
+        text: rawRomanText,
       });
       continue;
     }
@@ -177,18 +184,19 @@ function parseFormattedOutput(text: string): {
       if (currentSubBullet) {
         currentSection.subBullets.push(currentSubBullet);
       }
+      const rawSubText = trimmedLine.replace(/^\s*[a-z][.)]\s+/, "");
       currentSubBullet = {
         letter: subBulletMatch[1],
-        text: subBulletMatch[2].trim(),
+        text: rawSubText,
         romanItems: [],
       };
       continue;
     }
 
     if (currentSubBullet) {
-      currentSubBullet.text += " " + cleanLine;
+      currentSubBullet.text += " " + trimmedLine;
     } else if (currentSection) {
-      currentSection.header += " " + cleanLine;
+      currentSection.header += " " + trimmedLine;
     }
   }
 
