@@ -5,7 +5,7 @@ export const maxDuration = 120;
 
 export async function POST(request: Request) {
   try {
-    const { rawNotes, transcript, prompt } = await request.json();
+    const { rawNotes, transcript, prompt, biography } = await request.json();
 
     if (!rawNotes && !transcript) {
       return NextResponse.json(
@@ -20,6 +20,9 @@ export async function POST(request: Request) {
     });
 
     let inputContent = "";
+    if (biography) {
+      inputContent += `EXPERT BIOGRAPHY (from tracker):\n${biography}\n\n`;
+    }
     if (rawNotes) {
       inputContent += `RAW NOTES:\n${rawNotes}\n\n`;
     }

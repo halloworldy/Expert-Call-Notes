@@ -5,6 +5,7 @@ export const runtime = "nodejs";
 
 interface CallData {
   expert_name: string;
+  position?: string | null;
   call_date: string;
   formatted_output: string;
 }
@@ -26,6 +27,11 @@ interface RomanItem {
   text: string;
 }
 
+interface BackgroundBullet {
+  text: string;
+  subItems: string[];
+}
+
 function stripMarkdown(text: string): string {
   return text
     .replace(/\*{1,2}/g, "")
@@ -33,18 +39,58 @@ function stripMarkdown(text: string): string {
     .trim();
 }
 
-function parseFormattedOutput(text: string): Section[] {
+function parseFormattedOutput(text: string): {
+  background: BackgroundBullet[];
+  sections: Section[];
+} {
+  const background: BackgroundBullet[] = [];
   const sections: Section[] = [];
   const lines = text.split("\n");
 
   let currentSection: Section | null = null;
   let currentSubBullet: SubBullet | null = null;
+  let currentBgBullet: BackgroundBullet | null = null;
+  let inBackground = false;
+  let inSummary = false;
 
   for (const rawLine of lines) {
     const line = rawLine.trimEnd();
     if (!line.trim()) continue;
 
     const cleanLine = stripMarkdown(line);
+
+    if (cleanLine.match(/^Background\s*$/i)) {
+      inBackground = true;
+      inSummary = false;
+      continue;
+    }
+    if (cleanLine.match(/^Summary\s*$/i)) {
+      if (currentBgBullet) {
+        background.push(currentBgBullet);
+        currentBgBullet = null;
+      }
+      inBackground = false;
+      inSummary = true;
+      continue;
+    }
+
+    if (inBackground) {
+      const bgBulletMatch = cleanLine.match(/^\*\s+(.+)$/);
+      if (bgBulletMatch) {
+        if (currentBgBullet) background.push(currentBgBullet);
+        currentBgBullet = { text: bgBulletMatch[1], subItems: [] };
+        continue;
+      }
+      const bgSubMatch = cleanLine.match(/^\s*o\s+(.+)$/);
+      if (bgSubMatch && currentBgBullet) {
+        currentBgBullet.subItems.push(bgSubMatch[1]);
+        continue;
+      }
+      if (currentBgBullet) {
+        currentBgBullet.text += " " + cleanLine;
+      }
+      continue;
+    }
 
     const numberedHeaderMatch = cleanLine.match(
       /^\s*(?:#{1,3}\s+)?(\d+)\.\s+(.+)$/
@@ -63,6 +109,7 @@ function parseFormattedOutput(text: string): Section[] {
         header: numberedHeaderMatch[2].trim(),
         subBullets: [],
       };
+      if (!inSummary) inSummary = true;
       continue;
     }
 
@@ -111,12 +158,13 @@ function parseFormattedOutput(text: string): Section[] {
     }
   }
 
+  if (currentBgBullet) background.push(currentBgBullet);
   if (currentSubBullet && currentSection) {
     currentSection.subBullets.push(currentSubBullet);
   }
   if (currentSection) sections.push(currentSection);
 
-  return sections;
+  return { background, sections };
 }
 
 function formatDate(dateStr: string): string {
@@ -125,6 +173,18 @@ function formatDate(dateStr: string): string {
     day: "numeric",
     year: "numeric",
   });
+}
+
+function formatTocDate(dateStr: string): string {
+  const d = new Date(dateStr);
+  const day = String(d.getDate()).padStart(2, "0");
+  const months = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  ];
+  const month = months[d.getMonth()];
+  const year = String(d.getFullYear()).slice(-2);
+  return `${day}-${month}-${year}`;
 }
 
 export async function POST(request: Request) {
@@ -202,11 +262,19 @@ export async function POST(request: Request) {
       .stroke();
     doc.moveDown(0.8);
 
-    // Render TOC entries and track Y positions for page numbers
+    // Render TOC entries with position and date format
     const tocYPositions: number[] = [];
 
     calls.forEach((call, i) => {
       tocYPositions.push(doc.y);
+
+      // Build TOC entry: "1. Name - Position - (DD-Mon-YY)"
+      let tocText = call.expert_name;
+      if (call.position) {
+        tocText += ` - ${call.position}`;
+      }
+      tocText += ` - (${formatTocDate(call.call_date)})`;
+
       doc
         .font("Helvetica")
         .fontSize(10)
@@ -216,12 +284,7 @@ export async function POST(request: Request) {
         .font("Helvetica-Bold")
         .fontSize(10)
         .fillColor("#1a365d")
-        .text(call.expert_name, { continued: true, goTo: `call-${i}` });
-      doc
-        .font("Helvetica")
-        .fontSize(10)
-        .fillColor("#94a3b8")
-        .text(`   ${formatDate(call.call_date)}`, { goTo: `call-${i}` });
+        .text(tocText, { goTo: `call-${i}` });
       doc.moveDown(0.4);
     });
 
@@ -231,7 +294,7 @@ export async function POST(request: Request) {
     calls.forEach((call, i) => {
       doc.addPage();
       const range = doc.bufferedPageRange();
-      callPageNumbers.push(range.count); // 1-indexed page number
+      callPageNumbers.push(range.count);
       doc.addNamedDestination(`call-${i}`);
 
       // Call header
@@ -240,6 +303,15 @@ export async function POST(request: Request) {
         .fontSize(17)
         .fillColor("#1a365d")
         .text(call.expert_name, ml, doc.y, { width: contentWidth });
+
+      // Position line
+      if (call.position) {
+        doc
+          .font("Helvetica")
+          .fontSize(10)
+          .fillColor("#475569")
+          .text(call.position, ml, doc.y + 2, { width: contentWidth });
+      }
 
       // Rule under header
       const ruleY = doc.y + 4;
@@ -260,11 +332,55 @@ export async function POST(request: Request) {
       doc.moveDown(1);
 
       // Formatted content
-      const sections = parseFormattedOutput(call.formatted_output);
+      const { background, sections } = parseFormattedOutput(
+        call.formatted_output
+      );
 
+      // Render background
+      if (background.length > 0) {
+        doc
+          .font("Helvetica-Bold")
+          .fontSize(12)
+          .fillColor("#1a365d")
+          .text("Background", ml, doc.y, { width: contentWidth });
+        doc.moveDown(0.4);
+
+        for (const bullet of background) {
+          doc
+            .font("Helvetica")
+            .fontSize(10)
+            .fillColor("#000000")
+            .text(`\u2022 ${bullet.text}`, ml + 15, doc.y, {
+              width: contentWidth - 15,
+            });
+          doc.moveDown(0.15);
+
+          for (const sub of bullet.subItems) {
+            doc
+              .font("Helvetica")
+              .fontSize(10)
+              .fillColor("#000000")
+              .text(`o ${sub}`, ml + 35, doc.y, {
+                width: contentWidth - 35,
+              });
+            doc.moveDown(0.1);
+          }
+        }
+        doc.moveDown(0.5);
+      }
+
+      // Render summary sections
       if (sections.length > 0) {
+        if (background.length > 0) {
+          doc
+            .font("Helvetica-Bold")
+            .fontSize(12)
+            .fillColor("#1a365d")
+            .text("Summary", ml, doc.y, { width: contentWidth });
+          doc.moveDown(0.4);
+        }
+
         for (const section of sections) {
-          // Section header
           doc
             .font("Helvetica-Bold")
             .fontSize(11)
@@ -274,7 +390,6 @@ export async function POST(request: Request) {
             });
           doc.moveDown(0.3);
 
-          // Sub-bullets - no bold, no italic, all black
           for (const sub of section.subBullets) {
             const subX = ml + 25;
             const subWidth = contentWidth - 25;
@@ -288,7 +403,6 @@ export async function POST(request: Request) {
               });
             doc.moveDown(0.15);
 
-            // Roman numerals - no italic, black
             for (const roman of sub.romanItems) {
               const romX = ml + 50;
               const romWidth = contentWidth - 50;
@@ -305,7 +419,7 @@ export async function POST(request: Request) {
           }
           doc.moveDown(0.5);
         }
-      } else {
+      } else if (background.length === 0) {
         // Fallback: render as plain paragraphs
         const lines = call.formatted_output.split("\n");
         for (const rawLine of lines) {
@@ -345,10 +459,15 @@ export async function POST(request: Request) {
         .font("Helvetica")
         .fontSize(10)
         .fillColor("#94a3b8")
-        .text(String(callPageNumbers[i]), pageWidth - mr - 30, tocYPositions[i], {
-          width: 30,
-          align: "right",
-        });
+        .text(
+          String(callPageNumbers[i]),
+          pageWidth - mr - 30,
+          tocYPositions[i],
+          {
+            width: 30,
+            align: "right",
+          }
+        );
     });
 
     const pdfBuffer = await new Promise<Buffer>((resolve) => {
@@ -362,7 +481,10 @@ export async function POST(request: Request) {
         "Content-Disposition": `attachment; filename="${(() => {
           const now = new Date();
           const d = `${now.getFullYear()}.${String(now.getMonth() + 1).padStart(2, "0")}.${String(now.getDate()).padStart(2, "0")}`;
-          return `${d} - ${title} - ${subtitle}`.replace(/[/\\?%*:|"<>]/g, "");
+          return `${d} - ${title} - ${subtitle}`.replace(
+            /[/\\?%*:|"<>]/g,
+            ""
+          );
         })()}.pdf"`,
       },
     });

@@ -9,6 +9,8 @@ import type {
   ExpertCall,
   SectionDivider,
   ProjectItem,
+  TrackerFile,
+  MergeLog,
 } from "@/lib/types";
 import Link from "next/link";
 
@@ -25,6 +27,38 @@ function renderFormattedText(text: string) {
       return;
     }
     const clean = line.replace(/\*{1,2}/g, "").replace(/_{1,2}/g, "");
+
+    // Section labels: Background, Summary
+    if (clean.match(/^(Background|Summary)\s*$/i)) {
+      elements.push(
+        <div key={i} className="mt-4 mb-2 font-bold text-slate-800 text-sm border-b border-slate-200 pb-1">
+          {clean}
+        </div>
+      );
+      return;
+    }
+
+    // Background bullets: "* text"
+    const bgBulletMatch = clean.match(/^\*\s+(.+)$/);
+    if (bgBulletMatch) {
+      elements.push(
+        <div key={i} className="ml-4 my-0.5 text-black text-sm">
+          <span className="mr-1">{"\u2022"}</span> {bgBulletMatch[1]}
+        </div>
+      );
+      return;
+    }
+
+    // Background sub-bullets: "o text"
+    const bgSubMatch = clean.match(/^o\s+(.+)$/);
+    if (bgSubMatch) {
+      elements.push(
+        <div key={i} className="ml-10 my-0.5 text-black text-sm">
+          <span className="mr-1">o</span> {bgSubMatch[1]}
+        </div>
+      );
+      return;
+    }
 
     const headerMatch = clean.match(/^(?:#{1,3}\s+)?(\d+)\.\s+(.+)$/);
     if (headerMatch) {
@@ -81,6 +115,16 @@ function renderFormattedText(text: string) {
   return <>{elements}</>;
 }
 
+// ---- TOC date formatter (DD-Mon-YY) ----
+function formatTocDate(dateStr: string) {
+  const d = new Date(dateStr);
+  const day = String(d.getDate()).padStart(2, "0");
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const month = months[d.getMonth()];
+  const year = String(d.getFullYear()).slice(-2);
+  return `${day}-${month}-${year}`;
+}
+
 function getItemId(item: ProjectItem): string {
   return item.data.id;
 }
@@ -107,11 +151,36 @@ export default function ProjectDetailPage() {
   const [submitting, setSubmitting] = useState(false);
   const [formatting, setFormatting] = useState<string | null>(null);
 
+  // Active tab
+  const [activeTab, setActiveTab] = useState<"notes" | "tracker">("notes");
+
+  // Manual entry form
+  const [showManualForm, setShowManualForm] = useState(false);
+  const [manualExpertName, setManualExpertName] = useState("");
+  const [manualPosition, setManualPosition] = useState("");
+  const [manualCallDate, setManualCallDate] = useState(
+    new Date().toISOString().split("T")[0]
+  );
+  const [manualFormattedNotes, setManualFormattedNotes] = useState("");
+  const [submittingManual, setSubmittingManual] = useState(false);
+
+  // Tracker
+  const [tracker, setTracker] = useState<TrackerFile | null>(null);
+  const [uploadingTracker, setUploadingTracker] = useState(false);
+  const [networkFiles, setNetworkFiles] = useState<{
+    alphasights: File | null;
+    guidepoint: File | null;
+    glg: File | null;
+  }>({ alphasights: null, guidepoint: null, glg: null });
+  const [merging, setMerging] = useState(false);
+  const [mergeLog, setMergeLog] = useState<MergeLog | null>(null);
+
   // View / edit
   const [viewingCall, setViewingCall] = useState<ExpertCall | null>(null);
   const [editingCallId, setEditingCallId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({
     expert_name: "",
+    position: "",
     call_date: "",
     raw_notes: "",
     transcript: "",
@@ -182,6 +251,15 @@ export default function ProjectDetailPage() {
     if (!error && data) setDividers(data);
   }, [projectId, supabase]);
 
+  const loadTracker = useCallback(async () => {
+    const { data } = await supabase
+      .from("tracker_files")
+      .select("*")
+      .eq("project_id", projectId)
+      .single();
+    if (data) setTracker(data);
+  }, [projectId, supabase]);
+
   // Merge calls + dividers
   useEffect(() => {
     const merged: ProjectItem[] = [
@@ -198,7 +276,8 @@ export default function ProjectDetailPage() {
     loadProject();
     loadCalls();
     loadDividers();
-  }, [loadProject, loadCalls, loadDividers]);
+    loadTracker();
+  }, [loadProject, loadCalls, loadDividers, loadTracker]);
 
   // Auto-save export title/subtitle to DB with debounce
   const titleSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -230,9 +309,11 @@ export default function ProjectDetailPage() {
       .insert({
         project_id: projectId,
         expert_name: expertName.trim(),
+        position: manualPosition.trim() || null,
         call_date: callDate,
         raw_notes: rawNotes,
         transcript: transcript || null,
+        entry_type: "auto-generated",
       })
       .select()
       .single();
@@ -249,6 +330,7 @@ export default function ProjectDetailPage() {
       .eq("id", projectId);
 
     setExpertName("");
+    setManualPosition("");
     setCallDate(new Date().toISOString().split("T")[0]);
     setRawNotes("");
     setTranscript("");
@@ -265,6 +347,21 @@ export default function ProjectDetailPage() {
     if (!call) return;
 
     try {
+      // Attempt biography lookup from tracker
+      let biography: string | null = null;
+      try {
+        const nameForLookup = call.expert_name.split(" - ")[0].trim();
+        const lookupRes = await fetch("/api/lookup-expert", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectId, expertName: nameForLookup }),
+        });
+        const lookupData = await lookupRes.json();
+        if (lookupData.biography) biography = lookupData.biography;
+      } catch {
+        // Lookup failed, proceed without biography
+      }
+
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 120_000);
       const response = await fetch("/api/format", {
@@ -274,6 +371,7 @@ export default function ProjectDetailPage() {
           rawNotes: call.raw_notes,
           transcript: call.transcript,
           prompt,
+          biography,
         }),
         signal: controller.signal,
       });
@@ -301,11 +399,231 @@ export default function ProjectDetailPage() {
     setFormatting(null);
   }
 
+  // ---- Save manual entry ----
+  async function handleSaveManualEntry(e: React.FormEvent) {
+    e.preventDefault();
+    if (!manualExpertName.trim() || !manualFormattedNotes.trim()) return;
+    setSubmittingManual(true);
+
+    const { error } = await supabase
+      .from("expert_calls")
+      .insert({
+        project_id: projectId,
+        expert_name: manualExpertName.trim(),
+        position: manualPosition.trim() || null,
+        call_date: manualCallDate,
+        raw_notes: "",
+        formatted_output: manualFormattedNotes,
+        entry_type: "manual",
+        sort_order: items.length,
+      });
+
+    if (error) {
+      console.error("Failed to save manual entry:", error);
+      setSubmittingManual(false);
+      return;
+    }
+
+    await supabase
+      .from("projects")
+      .update({ updated_at: new Date().toISOString() })
+      .eq("id", projectId);
+
+    setManualExpertName("");
+    setManualPosition("");
+    setManualCallDate(new Date().toISOString().split("T")[0]);
+    setManualFormattedNotes("");
+    setShowManualForm(false);
+    setSubmittingManual(false);
+    loadCalls();
+    loadProject();
+  }
+
+  // ---- Tracker upload ----
+  async function handleTrackerUpload(file: File) {
+    setUploadingTracker(true);
+    try {
+      const buffer = await file.arrayBuffer();
+      const base64 = btoa(
+        new Uint8Array(buffer).reduce(
+          (data, byte) => data + String.fromCharCode(byte),
+          ""
+        )
+      );
+
+      // Parse metadata using xlsx
+      const XLSX = await import("xlsx");
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const sheetSummary: { name: string; expertCount: number }[] = [];
+      let lastUpdated: string | null = null;
+
+      for (const sheetName of workbook.SheetNames) {
+        const ws = workbook.Sheets[sheetName];
+        if (!ws) continue;
+
+        let headerRow = -1;
+        let nameCol = 4;
+        for (let row = 0; row < 15; row++) {
+          for (let col = 3; col <= 6; col++) {
+            const addr = XLSX.utils.encode_cell({ r: row, c: col });
+            const cell = ws[addr];
+            if (cell && typeof cell.v === "string" && cell.v.trim().toLowerCase() === "name") {
+              headerRow = row;
+              nameCol = col;
+              break;
+            }
+          }
+          if (headerRow >= 0) break;
+        }
+
+        let expertCount = 0;
+        if (headerRow >= 0) {
+          const range = XLSX.utils.decode_range(ws["!ref"] || "A1");
+          for (let row = headerRow + 1; row <= range.e.r; row++) {
+            const addr = XLSX.utils.encode_cell({ r: row, c: nameCol });
+            const cell = ws[addr];
+            if (cell && cell.v && String(cell.v).trim()) expertCount++;
+          }
+        }
+        sheetSummary.push({ name: sheetName, expertCount });
+
+        if (!lastUpdated) {
+          for (let col = 15; col < 30; col++) {
+            const addr = XLSX.utils.encode_cell({ r: 1, c: col });
+            const cell = ws[addr];
+            if (cell && typeof cell.v === "string" && cell.v.toLowerCase().includes("last updated")) {
+              const dateAddr = XLSX.utils.encode_cell({ r: 1, c: col + 1 });
+              const dateCell = ws[dateAddr];
+              if (dateCell) {
+                lastUpdated = dateCell.w || String(dateCell.v || "");
+              }
+              break;
+            }
+          }
+        }
+      }
+
+      // Upsert to supabase
+      const { error } = await supabase
+        .from("tracker_files")
+        .upsert({
+          project_id: projectId,
+          filename: file.name,
+          file_data: base64,
+          sheet_summary: sheetSummary,
+          last_updated: lastUpdated,
+        }, { onConflict: "project_id" });
+
+      if (error) {
+        console.error("Failed to upload tracker:", error);
+        alert("Failed to upload tracker. Please run migration-v4.sql first.");
+      } else {
+        loadTracker();
+      }
+    } catch (err) {
+      console.error("Tracker upload error:", err);
+      alert("Failed to parse Excel file");
+    }
+    setUploadingTracker(false);
+  }
+
+  // ---- Tracker download ----
+  function handleTrackerDownload() {
+    if (!tracker) return;
+    const binary = atob(tracker.file_data);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    const blob = new Blob([bytes], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
+    const fileName = `${dateStr} - ${project?.name || "Project"} - Expert Tracker.xlsx`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  // ---- Network merge ----
+  async function handleMerge() {
+    if (!tracker) return;
+    const hasFiles = networkFiles.alphasights || networkFiles.guidepoint || networkFiles.glg;
+    if (!hasFiles) {
+      alert("Please upload at least one network file");
+      return;
+    }
+    setMerging(true);
+    setMergeLog(null);
+
+    try {
+      // Convert tracker base64 back to File
+      const binary = atob(tracker.file_data);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      const masterBlob = new Blob([bytes], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const masterFile = new File([masterBlob], "master.xlsx");
+
+      const formData = new FormData();
+      formData.append("master", masterFile);
+      if (networkFiles.alphasights) formData.append("alphasights", networkFiles.alphasights);
+      if (networkFiles.guidepoint) formData.append("guidepoint", networkFiles.guidepoint);
+      if (networkFiles.glg) formData.append("glg", networkFiles.glg);
+
+      const response = await fetch("/api/merge", {
+        method: "POST",
+        body: formData,
+      });
+      const result = await response.json();
+
+      if (result.error) {
+        alert(`Merge failed: ${result.error}`);
+      } else {
+        // Update tracker with merged file
+        const mergedBase64 = result.mergedFileBase64;
+        await supabase
+          .from("tracker_files")
+          .update({
+            file_data: mergedBase64,
+            last_updated: new Date().toISOString().split("T")[0],
+          })
+          .eq("project_id", projectId);
+
+        setMergeLog({
+          timestamp: new Date().toISOString(),
+          networksProcessed: [
+            ...(networkFiles.alphasights ? ["AlphaSights"] : []),
+            ...(networkFiles.guidepoint ? ["Guidepoint"] : []),
+            ...(networkFiles.glg ? ["GLG"] : []),
+          ],
+          changes: result.changeLog,
+        });
+        setNetworkFiles({ alphasights: null, guidepoint: null, glg: null });
+        loadTracker();
+      }
+    } catch (err) {
+      console.error("Merge error:", err);
+      alert("Merge failed. Check that Python 3 and openpyxl are installed.");
+    }
+    setMerging(false);
+  }
+
   // ---- Edit call ----
   function startEditing(call: ExpertCall) {
     setEditingCallId(call.id);
     setEditForm({
       expert_name: call.expert_name,
+      position: call.position || "",
       call_date: call.call_date,
       raw_notes: call.raw_notes,
       transcript: call.transcript || "",
@@ -320,6 +638,7 @@ export default function ProjectDetailPage() {
       .from("expert_calls")
       .update({
         expert_name: editForm.expert_name.trim(),
+        position: editForm.position.trim() || null,
         call_date: editForm.call_date,
         raw_notes: editForm.raw_notes,
         transcript: editForm.transcript || null,
@@ -874,6 +1193,8 @@ export default function ProjectDetailPage() {
                           {callCounter}.{" "}
                           <span style={{ fontWeight: 500 }}>
                             {call.expert_name}
+                            {call.position ? ` - ${call.position}` : ""}
+                            {` - (${formatTocDate(call.call_date)})`}
                           </span>
                         </span>
                         <span
@@ -952,6 +1273,17 @@ export default function ProjectDetailPage() {
                   >
                     {call.expert_name}
                   </div>
+                  {call.position && (
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: "#475569",
+                        marginBottom: 4,
+                      }}
+                    >
+                      {call.position}
+                    </div>
+                  )}
                   <div
                     style={{
                       fontSize: 11,
@@ -972,15 +1304,198 @@ export default function ProjectDetailPage() {
         );
         })()}
 
+        {/* Tab Navigation */}
+        <div className="flex border-b border-slate-200 mb-5">
+          <button
+            onClick={() => setActiveTab("notes")}
+            className={`px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
+              activeTab === "notes"
+                ? "border-blue-700 text-blue-700"
+                : "border-transparent text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            Notes
+          </button>
+          <button
+            onClick={() => setActiveTab("tracker")}
+            className={`px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
+              activeTab === "tracker"
+                ? "border-blue-700 text-blue-700"
+                : "border-transparent text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            Expert Tracker
+          </button>
+        </div>
+
+        {/* ============ TRACKER TAB ============ */}
+        {activeTab === "tracker" && (
+          <div className="space-y-5">
+            {/* Upload tracker */}
+            <div className="bg-white rounded-lg border border-slate-200 p-5">
+              <h3 className="text-sm font-semibold text-slate-900 mb-3">Master Tracker</h3>
+              {tracker ? (
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <p className="text-sm text-slate-700">{tracker.filename}</p>
+                      <p className="text-xs text-slate-400">
+                        Uploaded: {new Date(tracker.uploaded_at).toLocaleDateString()}
+                        {tracker.last_updated && ` \u00b7 Last Updated: ${tracker.last_updated}`}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleTrackerDownload}
+                        className="px-3 py-1.5 bg-blue-700 text-white rounded-md hover:bg-blue-800 text-xs font-medium"
+                      >
+                        Download
+                      </button>
+                      <label className="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-md hover:bg-slate-200 text-xs font-medium cursor-pointer">
+                        Replace
+                        <input
+                          type="file"
+                          accept=".xlsx"
+                          className="hidden"
+                          onChange={(e) => {
+                            if (e.target.files?.[0]) handleTrackerUpload(e.target.files[0]);
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                  {/* Sheet summary */}
+                  {tracker.sheet_summary && (
+                    <div className="border border-slate-100 rounded-lg overflow-hidden">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="bg-slate-50">
+                            <th className="text-left px-3 py-1.5 font-medium text-slate-600">Sheet</th>
+                            <th className="text-right px-3 py-1.5 font-medium text-slate-600">Experts</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(tracker.sheet_summary as { name: string; expertCount: number }[]).map((s, i) => (
+                            <tr key={i} className="border-t border-slate-50">
+                              <td className="px-3 py-1.5 text-slate-700">{s.name}</td>
+                              <td className="px-3 py-1.5 text-right text-slate-500">{s.expertCount}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <label className="flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-lg p-8 cursor-pointer hover:border-blue-400 transition-colors">
+                  <span className="text-sm text-slate-500 mb-1">
+                    {uploadingTracker ? "Uploading..." : "Drop or click to upload master tracker (.xlsx)"}
+                  </span>
+                  <input
+                    type="file"
+                    accept=".xlsx"
+                    className="hidden"
+                    disabled={uploadingTracker}
+                    onChange={(e) => {
+                      if (e.target.files?.[0]) handleTrackerUpload(e.target.files[0]);
+                    }}
+                  />
+                </label>
+              )}
+            </div>
+
+            {/* Network merge */}
+            {tracker && (
+              <div className="bg-white rounded-lg border border-slate-200 p-5">
+                <h3 className="text-sm font-semibold text-slate-900 mb-3">Network Export Merge</h3>
+                <p className="text-xs text-slate-500 mb-4">Upload network export files to merge into the master tracker</p>
+                <div className="grid grid-cols-3 gap-3 mb-4">
+                  {(["alphasights", "guidepoint", "glg"] as const).map((network) => (
+                    <div key={network}>
+                      <label className="block text-xs font-medium text-slate-600 mb-1 capitalize">{network === "glg" ? "GLG" : network === "alphasights" ? "AlphaSights" : "Guidepoint"}</label>
+                      <label className="flex items-center justify-center border-2 border-dashed border-slate-200 rounded-lg p-4 cursor-pointer hover:border-blue-400 transition-colors text-xs text-slate-500">
+                        {networkFiles[network] ? networkFiles[network]!.name : "Choose file"}
+                        <input
+                          type="file"
+                          accept=".xlsx"
+                          className="hidden"
+                          onChange={(e) => {
+                            if (e.target.files?.[0]) {
+                              setNetworkFiles({ ...networkFiles, [network]: e.target.files[0] });
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  onClick={handleMerge}
+                  disabled={merging || (!networkFiles.alphasights && !networkFiles.guidepoint && !networkFiles.glg)}
+                  className="px-4 py-2 bg-blue-700 text-white rounded-lg hover:bg-blue-800 disabled:opacity-50 text-sm font-medium"
+                >
+                  {merging ? "Merging..." : "Merge"}
+                </button>
+
+                {/* Merge log */}
+                {mergeLog && (
+                  <div className="mt-4 p-4 bg-slate-50 rounded-lg border border-slate-100">
+                    <h4 className="text-xs font-semibold text-slate-700 mb-2">
+                      Merge Results ({mergeLog.networksProcessed.join(", ")})
+                    </h4>
+                    {mergeLog.changes.added.length > 0 && (
+                      <div className="mb-2">
+                        <p className="text-xs font-medium text-emerald-700 mb-1">New experts added ({mergeLog.changes.added.length})</p>
+                        {mergeLog.changes.added.map((c, i) => (
+                          <p key={i} className="text-xs text-slate-600 ml-2">{c.name} \u2192 {c.sheet} ({c.network})</p>
+                        ))}
+                      </div>
+                    )}
+                    {mergeLog.changes.networkUpdated.length > 0 && (
+                      <div className="mb-2">
+                        <p className="text-xs font-medium text-blue-700 mb-1">Network columns updated ({mergeLog.changes.networkUpdated.length})</p>
+                        {mergeLog.changes.networkUpdated.map((c, i) => (
+                          <p key={i} className="text-xs text-slate-600 ml-2">{c.name} \u2192 {c.network} marked ({c.sheet})</p>
+                        ))}
+                      </div>
+                    )}
+                    {mergeLog.changes.creditsUpdated.length > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-amber-700 mb-1">Credits updated ({mergeLog.changes.creditsUpdated.length})</p>
+                        {mergeLog.changes.creditsUpdated.map((c, i) => (
+                          <p key={i} className="text-xs text-slate-600 ml-2">{c.name}: {c.oldValue} \u2192 {c.newValue} ({c.sheet})</p>
+                        ))}
+                      </div>
+                    )}
+                    {mergeLog.changes.added.length === 0 && mergeLog.changes.networkUpdated.length === 0 && mergeLog.changes.creditsUpdated.length === 0 && (
+                      <p className="text-xs text-slate-500">No changes were made</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ============ NOTES TAB ============ */}
+        {activeTab === "notes" && (<>
         {/* Toolbar */}
         <div className="flex items-center gap-2 mb-5">
-          {!showForm && (
-            <button
-              onClick={() => setShowForm(true)}
-              className="px-4 py-2 bg-blue-700 text-white rounded-lg hover:bg-blue-800 text-sm font-medium transition-colors"
-            >
-              + Add Expert Call
-            </button>
+          {!showForm && !showManualForm && (
+            <>
+              <button
+                onClick={() => setShowForm(true)}
+                className="px-4 py-2 bg-blue-700 text-white rounded-lg hover:bg-blue-800 text-sm font-medium transition-colors"
+              >
+                + Add Expert Call
+              </button>
+              <button
+                onClick={() => setShowManualForm(true)}
+                className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-800 text-sm font-medium transition-colors"
+              >
+                + Add Manual Entry
+              </button>
+            </>
           )}
           <div className="flex items-center gap-2">
             <input
@@ -1006,20 +1521,20 @@ export default function ProjectDetailPage() {
               New Expert Call
             </h3>
             <form onSubmit={handleSaveCall} className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  Expert Title
+                </label>
+                <textarea
+                  value={expertName}
+                  onChange={(e) => setExpertName(e.target.value)}
+                  required
+                  rows={2}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  placeholder='e.g., "John Smith - Accenture - Former Managing Director, Financial Services Practice (2015-2022)"'
+                />
+              </div>
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">
-                    Call Title
-                  </label>
-                  <input
-                    type="text"
-                    value={expertName}
-                    onChange={(e) => setExpertName(e.target.value)}
-                    required
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                    placeholder='e.g., "Name - Company - Position"'
-                  />
-                </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">
                     Call Date
@@ -1030,6 +1545,18 @@ export default function ProjectDetailPage() {
                     onChange={(e) => setCallDate(e.target.value)}
                     required
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Position (optional, for TOC)
+                  </label>
+                  <input
+                    type="text"
+                    value={manualPosition}
+                    onChange={(e) => setManualPosition(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    placeholder="e.g., CEO Nearshore German-Speaking Markets, TP"
                   />
                 </div>
               </div>
@@ -1083,6 +1610,85 @@ export default function ProjectDetailPage() {
                 <button
                   type="button"
                   onClick={() => setShowForm(false)}
+                  className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 text-sm font-medium transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {/* Manual entry form */}
+        {showManualForm && (
+          <div className="bg-white rounded-lg border border-slate-200 p-5 mb-5">
+            <h3 className="text-sm font-semibold text-slate-900 mb-4">
+              New Manual Entry
+            </h3>
+            <form onSubmit={handleSaveManualEntry} className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Expert Name
+                  </label>
+                  <input
+                    type="text"
+                    value={manualExpertName}
+                    onChange={(e) => setManualExpertName(e.target.value)}
+                    required
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    placeholder="Expert name"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Position / Title
+                  </label>
+                  <input
+                    type="text"
+                    value={manualPosition}
+                    onChange={(e) => setManualPosition(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    placeholder="e.g., CEO Nearshore German-Speaking Markets, TP"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  Date
+                </label>
+                <input
+                  type="date"
+                  value={manualCallDate}
+                  onChange={(e) => setManualCallDate(e.target.value)}
+                  required
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm max-w-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  Full Formatted Notes *
+                </label>
+                <textarea
+                  value={manualFormattedNotes}
+                  onChange={(e) => setManualFormattedNotes(e.target.value)}
+                  required
+                  rows={15}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs input-font"
+                  placeholder="Paste your complete formatted notes here..."
+                />
+              </div>
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="submit"
+                  disabled={submittingManual}
+                  className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-800 disabled:opacity-50 text-sm font-medium transition-colors"
+                >
+                  {submittingManual ? "Saving..." : "Save Manual Entry"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowManualForm(false)}
                   className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 text-sm font-medium transition-colors"
                 >
                   Cancel
@@ -1213,21 +1819,38 @@ export default function ProjectDetailPage() {
                           </button>
                         </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-slate-500 mb-1">
+                          Expert Title
+                        </label>
+                        <textarea
+                          value={editForm.expert_name}
+                          onChange={(e) =>
+                            setEditForm({
+                              ...editForm,
+                              expert_name: e.target.value,
+                            })
+                          }
+                          rows={2}
+                          className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                        />
+                      </div>
+                      <div className="grid grid-cols-3 gap-3">
                         <div>
                           <label className="block text-xs font-medium text-slate-500 mb-1">
-                            Call Title
+                            Position (for TOC)
                           </label>
                           <input
                             type="text"
-                            value={editForm.expert_name}
+                            value={editForm.position}
                             onChange={(e) =>
                               setEditForm({
                                 ...editForm,
-                                expert_name: e.target.value,
+                                position: e.target.value,
                               })
                             }
                             className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                            placeholder="Optional"
                           />
                         </div>
                         <div>
@@ -1310,6 +1933,9 @@ export default function ProjectDetailPage() {
                             <h3 className="text-sm font-medium text-slate-900">
                               {call.expert_name}
                             </h3>
+                            {call.position && (
+                              <p className="text-xs text-slate-500">{call.position}</p>
+                            )}
                             <p className="text-xs text-slate-400">
                               {formatDate(call.call_date)} &middot; Added{" "}
                               {formatDateTime(call.created_at)}
@@ -1317,7 +1943,11 @@ export default function ProjectDetailPage() {
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          {call.formatted_output ? (
+                          {call.entry_type === "manual" ? (
+                            <span className="px-2 py-0.5 bg-violet-50 text-violet-700 rounded text-xs font-medium">
+                              Manual
+                            </span>
+                          ) : call.formatted_output ? (
                             <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded text-xs font-medium">
                               Formatted
                             </span>
@@ -1329,10 +1959,10 @@ export default function ProjectDetailPage() {
                         </div>
                       </div>
 
-                      {/* Raw notes preview */}
+                      {/* Notes preview */}
                       <p className="text-xs text-slate-500 line-clamp-2 mb-3 ml-6">
-                        {call.raw_notes.substring(0, 250)}
-                        {call.raw_notes.length > 250 ? "..." : ""}
+                        {(call.entry_type === "manual" ? call.formatted_output || "" : call.raw_notes).substring(0, 250)}
+                        {(call.entry_type === "manual" ? call.formatted_output || "" : call.raw_notes).length > 250 ? "..." : ""}
                       </p>
 
                       {/* Actions */}
@@ -1344,7 +1974,7 @@ export default function ProjectDetailPage() {
                           Edit
                         </button>
 
-                        {!call.formatted_output && (
+                        {!call.formatted_output && call.entry_type !== "manual" && (
                           <button
                             onClick={() => handleFormat(call.id)}
                             disabled={formatting === call.id}
@@ -1370,15 +2000,17 @@ export default function ProjectDetailPage() {
                                 ? "Hide Output"
                                 : "View Output"}
                             </button>
-                            <button
-                              onClick={() => handleFormat(call.id)}
-                              disabled={formatting === call.id}
-                              className="px-3 py-1.5 bg-slate-100 text-blue-700 rounded-md hover:bg-blue-50 disabled:opacity-50 text-xs font-medium transition-colors"
-                            >
-                              {formatting === call.id
-                                ? "Re-formatting..."
-                                : "Re-format"}
-                            </button>
+                            {call.entry_type !== "manual" && (
+                              <button
+                                onClick={() => handleFormat(call.id)}
+                                disabled={formatting === call.id}
+                                className="px-3 py-1.5 bg-slate-100 text-blue-700 rounded-md hover:bg-blue-50 disabled:opacity-50 text-xs font-medium transition-colors"
+                              >
+                                {formatting === call.id
+                                  ? "Re-formatting..."
+                                  : "Re-format"}
+                              </button>
+                            )}
                           </>
                         )}
 
@@ -1390,20 +2022,22 @@ export default function ProjectDetailPage() {
                         </button>
                       </div>
 
-                      {/* Formatting prompt (below actions) */}
-                      <div className="ml-6 mt-2">
-                        <details>
-                          <summary className="cursor-pointer text-xs text-blue-700 hover:text-blue-800 font-medium">
-                            Formatting Prompt
-                          </summary>
-                          <textarea
-                            value={prompt}
-                            onChange={(e) => setPrompt(e.target.value)}
-                            rows={8}
-                            className="w-full mt-2 px-3 py-2 border border-slate-200 rounded-lg text-xs input-font"
-                          />
-                        </details>
-                      </div>
+                      {/* Formatting prompt (below actions, hidden for manual entries) */}
+                      {call.entry_type !== "manual" && (
+                        <div className="ml-6 mt-2">
+                          <details>
+                            <summary className="cursor-pointer text-xs text-blue-700 hover:text-blue-800 font-medium">
+                              Formatting Prompt
+                            </summary>
+                            <textarea
+                              value={prompt}
+                              onChange={(e) => setPrompt(e.target.value)}
+                              rows={8}
+                              className="w-full mt-2 px-3 py-2 border border-slate-200 rounded-lg text-xs input-font"
+                            />
+                          </details>
+                        </div>
+                      )}
 
                       {/* Formatted output view */}
                       {viewingCall?.id === call.id &&
@@ -1419,6 +2053,7 @@ export default function ProjectDetailPage() {
             })}
           </div>
         )}
+        </>)}
       </main>
     </div>
   );

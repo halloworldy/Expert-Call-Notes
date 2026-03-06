@@ -29,16 +29,28 @@ interface RomanItem {
   text: string;
 }
 
+interface BackgroundBullet {
+  text: string;
+  subItems: string[];
+}
+
 function stripMarkdown(text: string): string {
   return text.replace(/\*{1,2}/g, "").replace(/_{1,2}/g, "").trim();
 }
 
-function parseFormattedOutput(text: string): Section[] {
+function parseFormattedOutput(text: string): {
+  background: BackgroundBullet[];
+  sections: Section[];
+} {
+  const background: BackgroundBullet[] = [];
   const sections: Section[] = [];
   const lines = text.split("\n");
 
   let currentSection: Section | null = null;
   let currentSubBullet: SubBullet | null = null;
+  let currentBgBullet: BackgroundBullet | null = null;
+  let inBackground = false;
+  let inSummary = false;
 
   for (const rawLine of lines) {
     const line = rawLine.trimEnd();
@@ -46,6 +58,43 @@ function parseFormattedOutput(text: string): Section[] {
 
     const cleanLine = stripMarkdown(line);
 
+    // Detect section headers
+    if (cleanLine.match(/^Background\s*$/i)) {
+      inBackground = true;
+      inSummary = false;
+      continue;
+    }
+    if (cleanLine.match(/^Summary\s*$/i)) {
+      if (currentBgBullet) {
+        background.push(currentBgBullet);
+        currentBgBullet = null;
+      }
+      inBackground = false;
+      inSummary = true;
+      continue;
+    }
+
+    // Background section parsing
+    if (inBackground) {
+      const bgBulletMatch = cleanLine.match(/^\*\s+(.+)$/);
+      if (bgBulletMatch) {
+        if (currentBgBullet) background.push(currentBgBullet);
+        currentBgBullet = { text: bgBulletMatch[1], subItems: [] };
+        continue;
+      }
+      const bgSubMatch = cleanLine.match(/^\s*o\s+(.+)$/);
+      if (bgSubMatch && currentBgBullet) {
+        currentBgBullet.subItems.push(bgSubMatch[1]);
+        continue;
+      }
+      // Continuation line
+      if (currentBgBullet) {
+        currentBgBullet.text += " " + cleanLine;
+      }
+      continue;
+    }
+
+    // Summary / main section parsing
     const numberedHeaderMatch = cleanLine.match(
       /^\s*(?:#{1,3}\s+)?(\d+)\.\s+(.+)$/
     );
@@ -63,6 +112,7 @@ function parseFormattedOutput(text: string): Section[] {
         header: numberedHeaderMatch[2].trim(),
         subBullets: [],
       };
+      if (!inSummary) inSummary = true;
       continue;
     }
 
@@ -111,12 +161,13 @@ function parseFormattedOutput(text: string): Section[] {
     }
   }
 
+  if (currentBgBullet) background.push(currentBgBullet);
   if (currentSubBullet && currentSection) {
     currentSection.subBullets.push(currentSubBullet);
   }
   if (currentSection) sections.push(currentSection);
 
-  return sections;
+  return { background, sections };
 }
 
 function formatCallDate(dateStr: string): string {
@@ -125,6 +176,28 @@ function formatCallDate(dateStr: string): string {
     day: "numeric",
     year: "numeric",
   });
+}
+
+function formatTocDate(dateStr: string): string {
+  const d = new Date(dateStr);
+  const day = String(d.getDate()).padStart(2, "0");
+  const months = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
+  const month = months[d.getMonth()];
+  const year = String(d.getFullYear()).slice(-2);
+  return `${day}-${month}-${year}`;
 }
 
 function renderFallbackParagraphs(text: string): Paragraph[] {
@@ -254,7 +327,7 @@ export async function generateDocx(
     })
   );
 
-  // Word built-in TOC field (auto-populated from Heading 1 styles, includes page numbers)
+  // Word built-in TOC field
   children.push(
     new TableOfContents("Table of Contents", {
       hyperlink: true,
@@ -267,6 +340,12 @@ export async function generateDocx(
     // Page break before each call
     children.push(new Paragraph({ children: [new PageBreak()] }));
 
+    // Build heading text: Name - Position - (DD-Mon-YY)
+    let headingText = call.expert_name;
+    if (call.position) {
+      headingText += ` - ${call.position}`;
+    }
+
     // Call header - uses HeadingLevel.HEADING_1 so TOC picks it up
     children.push(
       new Paragraph({
@@ -274,7 +353,7 @@ export async function generateDocx(
         spacing: { after: 100 },
         children: [
           new TextRun({
-            text: call.expert_name,
+            text: headingText,
             bold: true,
             size: 30,
             font: "Segoe UI",
@@ -301,11 +380,81 @@ export async function generateDocx(
     );
 
     // Parse and render formatted content
-    const sections = parseFormattedOutput(call.formatted_output!);
+    const { background, sections } = parseFormattedOutput(
+      call.formatted_output!
+    );
 
+    // Render background section
+    if (background.length > 0) {
+      children.push(
+        new Paragraph({
+          spacing: { before: 200, after: 150 },
+          children: [
+            new TextRun({
+              text: "Background",
+              bold: true,
+              size: 24,
+              font: "Segoe UI",
+              color: "1a365d",
+            }),
+          ],
+        })
+      );
+
+      for (const bullet of background) {
+        children.push(
+          new Paragraph({
+            spacing: { before: 80, after: 40 },
+            indent: { left: 360 },
+            children: [
+              new TextRun({
+                text: `\u2022 ${bullet.text}`,
+                size: 22,
+                font: "Segoe UI",
+                color: "000000",
+              }),
+            ],
+          })
+        );
+        for (const sub of bullet.subItems) {
+          children.push(
+            new Paragraph({
+              spacing: { before: 40, after: 40 },
+              indent: { left: 720 },
+              children: [
+                new TextRun({
+                  text: `o ${sub}`,
+                  size: 22,
+                  font: "Segoe UI",
+                  color: "000000",
+                }),
+              ],
+            })
+          );
+        }
+      }
+    }
+
+    // Render summary sections
     if (sections.length > 0) {
+      if (background.length > 0) {
+        children.push(
+          new Paragraph({
+            spacing: { before: 300, after: 150 },
+            children: [
+              new TextRun({
+                text: "Summary",
+                bold: true,
+                size: 24,
+                font: "Segoe UI",
+                color: "1a365d",
+              }),
+            ],
+          })
+        );
+      }
+
       for (const section of sections) {
-        // Section header
         children.push(
           new Paragraph({
             spacing: { before: 300, after: 150 },
@@ -321,7 +470,6 @@ export async function generateDocx(
           })
         );
 
-        // Sub-bullets
         for (const sub of section.subBullets) {
           children.push(
             new Paragraph({
@@ -338,7 +486,6 @@ export async function generateDocx(
             })
           );
 
-          // Roman numerals
           for (const roman of sub.romanItems) {
             children.push(
               new Paragraph({
@@ -357,7 +504,7 @@ export async function generateDocx(
           }
         }
       }
-    } else {
+    } else if (background.length === 0) {
       const fallback = renderFallbackParagraphs(call.formatted_output!);
       for (const p of fallback) {
         children.push(p);
