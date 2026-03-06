@@ -487,12 +487,13 @@ export async function generateDocx(
       }
 
       for (const section of sections) {
+        const cleanHeader = stripMarkdown(section.header);
         children.push(
           new Paragraph({
             spacing: { before: 300, after: 150 },
             children: [
               new TextRun({
-                text: `${section.number}. ${section.header}`,
+                text: `${section.number}. ${cleanHeader}`,
                 bold: true,
                 size: 24,
                 font: "Segoe UI",

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import PDFDocument from "pdfkit";
+import path from "path";
+import fs from "fs";
 
 export const runtime = "nodejs";
 
@@ -10,187 +11,12 @@ interface CallData {
   formatted_output: string;
 }
 
-interface Section {
-  number: string;
-  header: string;
-  subBullets: SubBullet[];
-}
-
-interface SubBullet {
-  letter: string;
-  text: string;
-  romanItems: RomanItem[];
-}
-
-interface RomanItem {
-  numeral: string;
-  text: string;
-}
-
-interface BackgroundBullet {
-  text: string;
-  subItems: string[];
-}
-
 function stripMarkdown(text: string): string {
   return text
     .replace(/\*{1,2}/g, "")
     .replace(/_{1,2}/g, "")
     .replace(/<\/?u>/g, "")
     .trim();
-}
-
-// Strip inline formatting markers and render plain text for PDF.
-// PDFKit corrupts text encoding when switching fonts with continued:true,
-// so we strip markers and render as single plain text calls.
-function renderPdfText(
-  doc: PDFKit.PDFDocument,
-  text: string,
-  x: number,
-  options: { width: number; fontSize?: number; baseFont?: string; color?: string; prefix?: string }
-) {
-  const fontSize = options.fontSize || 10;
-  const baseFont = options.baseFont || "Helvetica";
-  const color = options.color || "#000000";
-  const prefix = options.prefix || "";
-  const plainText = prefix + stripMarkdown(text);
-  doc.font(baseFont).fontSize(fontSize).fillColor(color)
-    .text(plainText, x, doc.y, { width: options.width });
-}
-
-function parseFormattedOutput(text: string): {
-  background: BackgroundBullet[];
-  sections: Section[];
-} {
-  const background: BackgroundBullet[] = [];
-  const sections: Section[] = [];
-  const lines = text.split("\n");
-
-  let currentSection: Section | null = null;
-  let currentSubBullet: SubBullet | null = null;
-  let currentBgBullet: BackgroundBullet | null = null;
-  let inBackground = false;
-  let inSummary = false;
-
-  for (const rawLine of lines) {
-    const line = rawLine.trimEnd();
-    if (!line.trim()) continue;
-
-    const trimmedLine = line.trim(); // preserves formatting markers
-    const cleanLine = stripMarkdown(line);
-
-    if (cleanLine.match(/^Background\s*$/i)) {
-      inBackground = true;
-      inSummary = false;
-      continue;
-    }
-    if (cleanLine.match(/^Summary\s*$/i)) {
-      if (currentBgBullet) {
-        background.push(currentBgBullet);
-        currentBgBullet = null;
-      }
-      inBackground = false;
-      inSummary = true;
-      continue;
-    }
-
-    if (inBackground) {
-      const bgBulletMatch = cleanLine.match(/^\*\s+(.+)$/);
-      if (bgBulletMatch) {
-        if (currentBgBullet) background.push(currentBgBullet);
-        const rawText = trimmedLine.replace(/^\*\s+/, "");
-        currentBgBullet = { text: rawText, subItems: [] };
-        continue;
-      }
-      const bgSubMatch = cleanLine.match(/^\s*o\s+(.+)$/);
-      if (bgSubMatch && currentBgBullet) {
-        const rawSubText = trimmedLine.replace(/^\s*o\s+/, "");
-        currentBgBullet.subItems.push(rawSubText);
-        continue;
-      }
-      if (currentBgBullet) {
-        currentBgBullet.text += " " + trimmedLine;
-      }
-      continue;
-    }
-
-    const numberedHeaderMatch = cleanLine.match(
-      /^\s*(?:#{1,3}\s+)?(\d+)\.\s+(.+)$/
-    );
-    const markdownHeaderMatch =
-      !numberedHeaderMatch && cleanLine.match(/^\s*#{1,3}\s+(.+)$/);
-
-    if (numberedHeaderMatch) {
-      if (currentSubBullet && currentSection) {
-        currentSection.subBullets.push(currentSubBullet);
-        currentSubBullet = null;
-      }
-      if (currentSection) sections.push(currentSection);
-      const rawHeader = trimmedLine.replace(/^\s*(?:#{1,3}\s+)?\d+\.\s+/, "");
-      currentSection = {
-        number: numberedHeaderMatch[1],
-        header: rawHeader,
-        subBullets: [],
-      };
-      if (!inSummary) inSummary = true;
-      continue;
-    }
-
-    if (markdownHeaderMatch) {
-      if (currentSubBullet && currentSection) {
-        currentSection.subBullets.push(currentSubBullet);
-        currentSubBullet = null;
-      }
-      if (currentSection) sections.push(currentSection);
-      const rawHeader = trimmedLine.replace(/^\s*#{1,3}\s+/, "");
-      currentSection = {
-        number: String(sections.length + 1),
-        header: rawHeader,
-        subBullets: [],
-      };
-      continue;
-    }
-
-    const romanMatch = cleanLine.match(
-      /^\s*(i{1,3}|iv|vi{0,3}|ix|x{0,3})[.)]\s+(.+)$/
-    );
-    if (romanMatch && currentSubBullet) {
-      const rawRomanText = trimmedLine.replace(/^\s*(i{1,3}|iv|vi{0,3}|ix|x{0,3})[.)]\s+/, "");
-      currentSubBullet.romanItems.push({
-        numeral: romanMatch[1],
-        text: rawRomanText,
-      });
-      continue;
-    }
-
-    const subBulletMatch = cleanLine.match(/^\s*([a-z])[.)]\s+(.+)$/);
-    if (subBulletMatch && currentSection) {
-      if (currentSubBullet) {
-        currentSection.subBullets.push(currentSubBullet);
-      }
-      const rawSubText = trimmedLine.replace(/^\s*[a-z][.)]\s+/, "");
-      currentSubBullet = {
-        letter: subBulletMatch[1],
-        text: rawSubText,
-        romanItems: [],
-      };
-      continue;
-    }
-
-    if (currentSubBullet) {
-      currentSubBullet.text += " " + trimmedLine;
-    } else if (currentSection) {
-      currentSection.header += " " + trimmedLine;
-    }
-  }
-
-  if (currentBgBullet) background.push(currentBgBullet);
-  if (currentSubBullet && currentSection) {
-    currentSection.subBullets.push(currentSubBullet);
-  }
-  if (currentSection) sections.push(currentSection);
-
-  return { background, sections };
 }
 
 function formatDate(dateStr: string): string {
@@ -213,6 +39,239 @@ function formatTocDate(dateStr: string): string {
   return `${day}-${month}-${year}`;
 }
 
+// Parse formatted_output text into structured sections for the document.
+// Uses cleanLine for structural matching but returns clean text (no raw markers).
+function parseFormattedOutput(text: string): {
+  background: { text: string; subItems: string[] }[];
+  sections: { number: string; header: string; subBullets: { letter: string; text: string; romanItems: { numeral: string; text: string }[] }[] }[];
+} {
+  const background: { text: string; subItems: string[] }[] = [];
+  const sections: { number: string; header: string; subBullets: { letter: string; text: string; romanItems: { numeral: string; text: string }[] }[] }[] = [];
+  const lines = text.split("\n");
+
+  let currentSection: (typeof sections)[0] | null = null;
+  let currentSubBullet: (typeof sections)[0]["subBullets"][0] | null = null;
+  let currentBgBullet: (typeof background)[0] | null = null;
+  let inBackground = false;
+  let inSummary = false;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+    if (!line.trim()) continue;
+
+    const cleanLine = stripMarkdown(line);
+
+    if (cleanLine.match(/^Background\s*$/i)) {
+      inBackground = true;
+      inSummary = false;
+      continue;
+    }
+    if (cleanLine.match(/^Summary\s*$/i)) {
+      if (currentBgBullet) { background.push(currentBgBullet); currentBgBullet = null; }
+      inBackground = false;
+      inSummary = true;
+      continue;
+    }
+
+    if (inBackground) {
+      const bgBulletMatch = cleanLine.match(/^\*\s+(.+)$/);
+      if (bgBulletMatch) {
+        if (currentBgBullet) background.push(currentBgBullet);
+        currentBgBullet = { text: bgBulletMatch[1], subItems: [] };
+        continue;
+      }
+      const bgSubMatch = cleanLine.match(/^\s*o\s+(.+)$/);
+      if (bgSubMatch && currentBgBullet) {
+        currentBgBullet.subItems.push(bgSubMatch[1]);
+        continue;
+      }
+      if (currentBgBullet) {
+        currentBgBullet.text += " " + cleanLine;
+      }
+      continue;
+    }
+
+    const numberedHeaderMatch = cleanLine.match(/^\s*(?:#{1,3}\s+)?(\d+)\.\s+(.+)$/);
+    const markdownHeaderMatch = !numberedHeaderMatch && cleanLine.match(/^\s*#{1,3}\s+(.+)$/);
+
+    if (numberedHeaderMatch) {
+      if (currentSubBullet && currentSection) { currentSection.subBullets.push(currentSubBullet); currentSubBullet = null; }
+      if (currentSection) sections.push(currentSection);
+      currentSection = { number: numberedHeaderMatch[1], header: numberedHeaderMatch[2].trim(), subBullets: [] };
+      if (!inSummary) inSummary = true;
+      continue;
+    }
+
+    if (markdownHeaderMatch) {
+      if (currentSubBullet && currentSection) { currentSection.subBullets.push(currentSubBullet); currentSubBullet = null; }
+      if (currentSection) sections.push(currentSection);
+      currentSection = { number: String(sections.length + 1), header: markdownHeaderMatch[1].trim(), subBullets: [] };
+      continue;
+    }
+
+    const romanMatch = cleanLine.match(/^\s*(i{1,3}|iv|vi{0,3}|ix|x{0,3})[.)]\s+(.+)$/);
+    if (romanMatch && currentSubBullet) {
+      currentSubBullet.romanItems.push({ numeral: romanMatch[1], text: romanMatch[2].trim() });
+      continue;
+    }
+
+    const subBulletMatch = cleanLine.match(/^\s*([a-z])[.)]\s+(.+)$/);
+    if (subBulletMatch && currentSection) {
+      if (currentSubBullet) currentSection.subBullets.push(currentSubBullet);
+      currentSubBullet = { letter: subBulletMatch[1], text: subBulletMatch[2].trim(), romanItems: [] };
+      continue;
+    }
+
+    if (currentSubBullet) {
+      currentSubBullet.text += " " + cleanLine;
+    } else if (currentSection) {
+      currentSection.header += " " + cleanLine;
+    }
+  }
+
+  if (currentBgBullet) background.push(currentBgBullet);
+  if (currentSubBullet && currentSection) currentSection.subBullets.push(currentSubBullet);
+  if (currentSection) sections.push(currentSection);
+
+  return { background, sections };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type PdfContent = any;
+
+function buildCallContent(call: CallData): PdfContent[] {
+  const content: PdfContent[] = [];
+  const { background, sections } = parseFormattedOutput(call.formatted_output);
+
+  // Call header
+  content.push({
+    text: call.expert_name,
+    fontSize: 17,
+    bold: true,
+    color: "#1a365d",
+    margin: [0, 0, 0, 2],
+  });
+
+  // Position
+  if (call.position) {
+    content.push({
+      text: call.position,
+      fontSize: 10,
+      color: "#475569",
+      margin: [0, 0, 0, 2],
+    });
+  }
+
+  // Rule
+  content.push({
+    canvas: [{ type: "line", x1: 0, y1: 0, x2: 475, y2: 0, lineWidth: 1.5, lineColor: "#2d5899" }],
+    margin: [0, 0, 0, 6],
+  });
+
+  // Date
+  content.push({
+    text: formatDate(call.call_date),
+    fontSize: 9,
+    italics: true,
+    color: "#94a3b8",
+    margin: [0, 0, 0, 16],
+  });
+
+  // Background section
+  if (background.length > 0) {
+    content.push({
+      text: "Background",
+      fontSize: 12,
+      bold: true,
+      color: "#1a365d",
+      margin: [0, 0, 0, 6],
+    });
+
+    for (const bullet of background) {
+      content.push({
+        text: `\u2022  ${bullet.text}`,
+        fontSize: 10,
+        color: "#000000",
+        margin: [15, 2, 0, 2],
+      });
+      for (const sub of bullet.subItems) {
+        content.push({
+          text: `o  ${sub}`,
+          fontSize: 10,
+          color: "#000000",
+          margin: [35, 1, 0, 1],
+        });
+      }
+    }
+
+    content.push({ text: "", margin: [0, 6, 0, 0] });
+  }
+
+  // Summary sections
+  if (sections.length > 0) {
+    if (background.length > 0) {
+      content.push({
+        text: "Summary",
+        fontSize: 12,
+        bold: true,
+        color: "#1a365d",
+        margin: [0, 6, 0, 6],
+      });
+    }
+
+    for (const section of sections) {
+      content.push({
+        text: `${section.number}. ${section.header}`,
+        fontSize: 11,
+        bold: true,
+        color: "#1a365d",
+        margin: [0, 8, 0, 4],
+      });
+
+      for (const sub of section.subBullets) {
+        content.push({
+          text: `${sub.letter}. ${sub.text}`,
+          fontSize: 10,
+          color: "#000000",
+          margin: [25, 2, 0, 2],
+        });
+
+        for (const roman of sub.romanItems) {
+          content.push({
+            text: `${roman.numeral}. ${roman.text}`,
+            fontSize: 10,
+            color: "#000000",
+            margin: [50, 1, 0, 1],
+          });
+        }
+      }
+
+      content.push({ text: "", margin: [0, 6, 0, 0] });
+    }
+  } else if (background.length === 0) {
+    // Fallback: render as plain paragraphs
+    const lines = call.formatted_output.split("\n");
+    for (const rawLine of lines) {
+      const trimmed = rawLine.trim();
+      if (!trimmed) {
+        content.push({ text: " ", fontSize: 6 });
+        continue;
+      }
+      const cleanText = stripMarkdown(trimmed);
+      const isHeader = /^#{1,6}\s/.test(trimmed) || /^\d+\.\s/.test(trimmed);
+      content.push({
+        text: cleanText,
+        fontSize: isHeader ? 11 : 10,
+        bold: isHeader,
+        color: isHeader ? "#1a365d" : "#000000",
+        margin: [0, 2, 0, 2],
+      });
+    }
+  }
+
+  return content;
+}
+
 export async function POST(request: Request) {
   try {
     const { projectName, calls, exportTitle, exportSubtitle } =
@@ -226,268 +285,146 @@ export async function POST(request: Request) {
     const title = exportTitle || projectName;
     const subtitle = exportSubtitle || "Expert Call Diligence Report";
 
-    const doc = new PDFDocument({
-      size: "A4",
-      margins: { top: 60, bottom: 60, left: 60, right: 60 },
-      info: {
-        Title: `${title} - Diligence Report`,
-        Author: "Expert Call Notes",
+    // Load Roboto fonts from pdfmake
+    const fontsDir = path.join(process.cwd(), "node_modules/pdfmake/build/fonts/Roboto");
+    const fonts = {
+      Roboto: {
+        normal: fs.readFileSync(path.join(fontsDir, "Roboto-Regular.ttf")),
+        bold: fs.readFileSync(path.join(fontsDir, "Roboto-Medium.ttf")),
+        italics: fs.readFileSync(path.join(fontsDir, "Roboto-Italic.ttf")),
+        bolditalics: fs.readFileSync(path.join(fontsDir, "Roboto-MediumItalic.ttf")),
       },
-      autoFirstPage: true,
-      bufferPages: true,
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const PdfPrinter = require("pdfmake/src/printer");
+    const printer = new PdfPrinter(fonts);
+
+    // Build document content
+    const content: PdfContent[] = [];
+
+    // ---- TITLE PAGE ----
+    content.push({ text: "", margin: [0, 180, 0, 0] });
+    content.push({
+      text: title,
+      fontSize: 28,
+      bold: true,
+      color: "#1a365d",
+      alignment: "center",
+      margin: [0, 0, 0, 12],
+    });
+    content.push({
+      canvas: [{ type: "line", x1: 195, y1: 0, x2: 280, y2: 0, lineWidth: 2, lineColor: "#2d5899" }],
+      alignment: "center",
+      margin: [0, 0, 0, 12],
+    });
+    content.push({
+      text: subtitle,
+      fontSize: 14,
+      color: "#64748b",
+      alignment: "center",
+      margin: [0, 0, 0, 8],
+    });
+    content.push({
+      text: formatDate(new Date().toISOString()),
+      fontSize: 11,
+      color: "#94a3b8",
+      alignment: "center",
+    });
+    content.push({ text: "", pageBreak: "after" });
+
+    // ---- TABLE OF CONTENTS ----
+    content.push({
+      text: "Table of Contents",
+      fontSize: 20,
+      bold: true,
+      color: "#1a365d",
+      margin: [0, 0, 0, 4],
+    });
+    content.push({
+      canvas: [{ type: "line", x1: 0, y1: 0, x2: 475, y2: 0, lineWidth: 0.5, lineColor: "#e2e8f0" }],
+      margin: [0, 0, 0, 16],
     });
 
-    const chunks: Uint8Array[] = [];
-    doc.on("data", (chunk: Uint8Array) => chunks.push(chunk));
-
-    const pageWidth = 595.28;
-    const ml = 60;
-    const mr = 60;
-    const contentWidth = pageWidth - ml - mr;
-
-    // ---- TITLE PAGE (page 0) ----
-    doc.moveDown(10);
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(28)
-      .fillColor("#1a365d")
-      .text(title, ml, doc.y, { width: contentWidth, align: "center" });
-    doc.moveDown(0.8);
-    doc
-      .font("Helvetica")
-      .fontSize(14)
-      .fillColor("#64748b")
-      .text(subtitle, ml, doc.y, {
-        width: contentWidth,
-        align: "center",
-      });
-    doc.moveDown(0.4);
-    doc
-      .font("Helvetica")
-      .fontSize(11)
-      .fillColor("#94a3b8")
-      .text(formatDate(new Date().toISOString()), ml, doc.y, {
-        width: contentWidth,
-        align: "center",
-      });
-
-    // ---- TABLE OF CONTENTS (page 1) ----
-    doc.addPage();
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(20)
-      .fillColor("#1a365d")
-      .text("Table of Contents", ml, doc.y, { width: contentWidth });
-    doc.moveDown(0.3);
-
-    doc
-      .moveTo(ml, doc.y)
-      .lineTo(pageWidth - mr, doc.y)
-      .strokeColor("#e2e8f0")
-      .lineWidth(0.5)
-      .stroke();
-    doc.moveDown(0.8);
-
-    // Render TOC entries with position and date format
-    const tocYPositions: number[] = [];
-
     calls.forEach((call, i) => {
-      tocYPositions.push(doc.y);
-
-      // Build TOC entry: "1. Name - Position - (DD-Mon-YY)"
       let tocText = call.expert_name;
-      if (call.position) {
-        tocText += ` - ${call.position}`;
-      }
+      if (call.position) tocText += ` - ${call.position}`;
       tocText += ` - (${formatTocDate(call.call_date)})`;
 
-      doc
-        .font("Helvetica")
-        .fontSize(10)
-        .fillColor("#1a365d")
-        .text(`${i + 1}. `, ml, doc.y, { continued: true, goTo: `call-${i}` });
-      doc
-        .font("Helvetica")
-        .fontSize(10)
-        .fillColor("#1a365d")
-        .text(tocText, { goTo: `call-${i}` });
-      doc.moveDown(0.4);
-    });
-
-    // ---- CALL SECTIONS ----
-    const callPageNumbers: number[] = [];
-
-    calls.forEach((call, i) => {
-      doc.addPage();
-      const range = doc.bufferedPageRange();
-      callPageNumbers.push(range.count);
-      doc.addNamedDestination(`call-${i}`);
-
-      // Call header
-      doc
-        .font("Helvetica-Bold")
-        .fontSize(17)
-        .fillColor("#1a365d")
-        .text(call.expert_name, ml, doc.y, { width: contentWidth });
-
-      // Position line
-      if (call.position) {
-        doc
-          .font("Helvetica")
-          .fontSize(10)
-          .fillColor("#475569")
-          .text(call.position, ml, doc.y + 2, { width: contentWidth });
-      }
-
-      // Rule under header
-      const ruleY = doc.y + 4;
-      doc
-        .moveTo(ml, ruleY)
-        .lineTo(pageWidth - mr, ruleY)
-        .strokeColor("#2d5899")
-        .lineWidth(1.5)
-        .stroke();
-      doc.y = ruleY + 8;
-
-      // Date
-      doc
-        .font("Helvetica-Oblique")
-        .fontSize(9)
-        .fillColor("#94a3b8")
-        .text(formatDate(call.call_date), ml, doc.y, { width: contentWidth });
-      doc.moveDown(1);
-
-      // Formatted content
-      const { background, sections } = parseFormattedOutput(
-        call.formatted_output
-      );
-
-      // Render background
-      if (background.length > 0) {
-        doc
-          .font("Helvetica-Bold")
-          .fontSize(12)
-          .fillColor("#1a365d")
-          .text("Background", ml, doc.y, { width: contentWidth });
-        doc.moveDown(0.4);
-
-        for (const bullet of background) {
-          renderPdfText(doc, bullet.text, ml + 15, { width: contentWidth - 15, prefix: "\u2022 " });
-          doc.moveDown(0.15);
-
-          for (const sub of bullet.subItems) {
-            renderPdfText(doc, sub, ml + 35, { width: contentWidth - 35, prefix: "o " });
-            doc.moveDown(0.1);
-          }
-        }
-        doc.moveDown(0.5);
-      }
-
-      // Render summary sections
-      if (sections.length > 0) {
-        if (background.length > 0) {
-          doc
-            .font("Helvetica-Bold")
-            .fontSize(12)
-            .fillColor("#1a365d")
-            .text("Summary", ml, doc.y, { width: contentWidth });
-          doc.moveDown(0.4);
-        }
-
-        for (const section of sections) {
-          doc
-            .font("Helvetica-Bold")
-            .fontSize(11)
-            .fillColor("#1a365d")
-            .text(`${section.number}. ${section.header}`, ml, doc.y, {
-              width: contentWidth,
-            });
-          doc.moveDown(0.3);
-
-          for (const sub of section.subBullets) {
-            const subX = ml + 25;
-            const subWidth = contentWidth - 25;
-
-            renderPdfText(doc, sub.text, subX, { width: subWidth, prefix: `${sub.letter}. ` });
-            doc.moveDown(0.15);
-
-            for (const roman of sub.romanItems) {
-              const romX = ml + 50;
-              const romWidth = contentWidth - 50;
-
-              renderPdfText(doc, roman.text, romX, { width: romWidth, prefix: `${roman.numeral}. ` });
-              doc.moveDown(0.1);
-            }
-          }
-          doc.moveDown(0.5);
-        }
-      } else if (background.length === 0) {
-        // Fallback: render as plain paragraphs
-        const lines = call.formatted_output.split("\n");
-        for (const rawLine of lines) {
-          const trimmed = rawLine.trim();
-          if (!trimmed) {
-            doc.moveDown(0.3);
-            continue;
-          }
-          doc
-            .font("Helvetica")
-            .fontSize(10)
-            .fillColor("#000000")
-            .text(trimmed, ml, doc.y, { width: contentWidth });
-          doc.moveDown(0.1);
-        }
-      }
-    });
-
-    // ---- ADD PAGE NUMBERS TO ALL PAGES (except title page) ----
-    const totalPages = doc.bufferedPageRange().count;
-    for (let i = 1; i < totalPages; i++) {
-      doc.switchToPage(i);
-      doc
-        .font("Helvetica")
-        .fontSize(9)
-        .fillColor("#94a3b8")
-        .text(String(i + 1), ml, doc.page.height - 40, {
-          width: contentWidth,
-          align: "center",
-        });
-    }
-
-    // ---- ADD PAGE NUMBERS TO TOC ENTRIES ----
-    doc.switchToPage(1); // TOC page
-    calls.forEach((_call, i) => {
-      doc
-        .font("Helvetica")
-        .fontSize(10)
-        .fillColor("#94a3b8")
-        .text(
-          String(callPageNumbers[i]),
-          pageWidth - mr - 30,
-          tocYPositions[i],
+      content.push({
+        columns: [
           {
+            text: `${i + 1}. ${tocText}`,
+            fontSize: 10,
+            color: "#1a365d",
+            width: "*",
+          },
+          {
+            text: `${i + 3}`,
+            fontSize: 10,
+            color: "#94a3b8",
             width: 30,
-            align: "right",
-          }
-        );
+            alignment: "right",
+          },
+        ],
+        margin: [0, 4, 0, 4],
+      });
+    });
+    content.push({ text: "", pageBreak: "after" });
+
+    // ---- CALL PAGES ----
+    calls.forEach((call, i) => {
+      const callContent = buildCallContent(call);
+      content.push(...callContent);
+      if (i < calls.length - 1) {
+        content.push({ text: "", pageBreak: "after" });
+      }
     });
 
-    const pdfBuffer = await new Promise<Buffer>((resolve) => {
-      doc.on("end", () => resolve(Buffer.concat(chunks)));
-      doc.end();
+    const docDefinition = {
+      pageSize: "A4" as const,
+      pageMargins: [60, 60, 60, 60] as [number, number, number, number],
+      defaultStyle: {
+        font: "Roboto",
+        fontSize: 10,
+        color: "#000000",
+        lineHeight: 1.4,
+      },
+      info: {
+        title: `${title} - Diligence Report`,
+        author: "Expert Call Notes",
+      },
+      footer: (currentPage: number) => {
+        if (currentPage === 1) return { text: "" };
+        return {
+          text: String(currentPage),
+          fontSize: 9,
+          color: "#94a3b8",
+          alignment: "center" as const,
+          margin: [0, 20, 0, 0] as [number, number, number, number],
+        };
+      },
+      content,
+    };
+
+    const pdfDoc = printer.createPdfKitDocument(docDefinition);
+    const chunks: Buffer[] = [];
+
+    const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {
+      pdfDoc.on("data", (chunk: Buffer) => chunks.push(chunk));
+      pdfDoc.on("end", () => resolve(Buffer.concat(chunks)));
+      pdfDoc.on("error", reject);
+      pdfDoc.end();
     });
+
+    const now = new Date();
+    const d = `${now.getFullYear()}.${String(now.getMonth() + 1).padStart(2, "0")}.${String(now.getDate()).padStart(2, "0")}`;
+    const fileName = `${d} - ${title} - ${subtitle}`.replace(/[/\\?%*:|"<>]/g, "");
 
     return new Response(pdfBuffer as unknown as BodyInit, {
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="${(() => {
-          const now = new Date();
-          const d = `${now.getFullYear()}.${String(now.getMonth() + 1).padStart(2, "0")}.${String(now.getDate()).padStart(2, "0")}`;
-          return `${d} - ${title} - ${subtitle}`.replace(
-            /[/\\?%*:|"<>]/g,
-            ""
-          );
-        })()}.pdf"`,
+        "Content-Disposition": `attachment; filename="${fileName}.pdf"`,
       },
     });
   } catch (error) {
