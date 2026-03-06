@@ -40,9 +40,10 @@ function stripMarkdown(text: string): string {
     .trim();
 }
 
-// Render text with inline formatting (bold, italic, underline) using PDFKit.
-// Accepts an optional prefix (e.g. "• " or "a. ") to avoid broken continued:true chaining.
-function renderFormattedPdfText(
+// Strip inline formatting markers and render plain text for PDF.
+// PDFKit corrupts text encoding when switching fonts with continued:true,
+// so we strip markers and render as single plain text calls.
+function renderPdfText(
   doc: PDFKit.PDFDocument,
   text: string,
   x: number,
@@ -52,57 +53,9 @@ function renderFormattedPdfText(
   const baseFont = options.baseFont || "Helvetica";
   const color = options.color || "#000000";
   const prefix = options.prefix || "";
-  const regex = /(\*\*(.+?)\*\*)|(_(.+?)_)|(<u>(.+?)<\/u>)/g;
-  let lastIndex = 0;
-  let match;
-  const segments: { text: string; bold?: boolean; italic?: boolean; underline?: boolean }[] = [];
-
-  while ((match = regex.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      segments.push({ text: text.slice(lastIndex, match.index) });
-    }
-    if (match[2]) {
-      segments.push({ text: match[2], bold: true });
-    } else if (match[4]) {
-      segments.push({ text: match[4], italic: true });
-    } else if (match[6]) {
-      segments.push({ text: match[6], underline: true });
-    }
-    lastIndex = match.index + match[0].length;
-  }
-  if (lastIndex < text.length) {
-    segments.push({ text: text.slice(lastIndex) });
-  }
-
-  // No formatting markers found — render as plain text
-  if (segments.length === 0 || (segments.length === 1 && !segments[0].bold && !segments[0].italic && !segments[0].underline)) {
-    const plainText = prefix + (segments.length > 0 ? segments[0].text : text);
-    doc.font(baseFont).fontSize(fontSize).fillColor(color)
-      .text(plainText, x, doc.y, { width: options.width });
-    return;
-  }
-
-  // Has formatting — prepend prefix as a plain segment
-  if (prefix) {
-    segments.unshift({ text: prefix });
-  }
-
-  segments.forEach((seg, i) => {
-    const isLast = i === segments.length - 1;
-    let font = baseFont;
-    if (seg.bold) font = "Helvetica-Bold";
-    else if (seg.italic) font = "Helvetica-Oblique";
-    doc.font(font).fontSize(fontSize).fillColor(color);
-    const opts: Record<string, unknown> = { width: options.width, continued: !isLast };
-    if (seg.underline) opts.underline = true;
-    if (i === 0) {
-      // First segment: explicit x,y positioning
-      doc.text(seg.text, x, doc.y, opts);
-    } else {
-      // Continuation segments: no x,y, just options
-      doc.text(seg.text, opts);
-    }
-  });
+  const plainText = prefix + stripMarkdown(text);
+  doc.font(baseFont).fontSize(fontSize).fillColor(color)
+    .text(plainText, x, doc.y, { width: options.width });
 }
 
 function parseFormattedOutput(text: string): {
@@ -419,11 +372,11 @@ export async function POST(request: Request) {
         doc.moveDown(0.4);
 
         for (const bullet of background) {
-          renderFormattedPdfText(doc, bullet.text, ml + 15, { width: contentWidth - 15, prefix: "\u2022 " });
+          renderPdfText(doc, bullet.text, ml + 15, { width: contentWidth - 15, prefix: "\u2022 " });
           doc.moveDown(0.15);
 
           for (const sub of bullet.subItems) {
-            renderFormattedPdfText(doc, sub, ml + 35, { width: contentWidth - 35, prefix: "o " });
+            renderPdfText(doc, sub, ml + 35, { width: contentWidth - 35, prefix: "o " });
             doc.moveDown(0.1);
           }
         }
@@ -455,14 +408,14 @@ export async function POST(request: Request) {
             const subX = ml + 25;
             const subWidth = contentWidth - 25;
 
-            renderFormattedPdfText(doc, sub.text, subX, { width: subWidth, prefix: `${sub.letter}. ` });
+            renderPdfText(doc, sub.text, subX, { width: subWidth, prefix: `${sub.letter}. ` });
             doc.moveDown(0.15);
 
             for (const roman of sub.romanItems) {
               const romX = ml + 50;
               const romWidth = contentWidth - 50;
 
-              renderFormattedPdfText(doc, roman.text, romX, { width: romWidth, prefix: `${roman.numeral}. ` });
+              renderPdfText(doc, roman.text, romX, { width: romWidth, prefix: `${roman.numeral}. ` });
               doc.moveDown(0.1);
             }
           }

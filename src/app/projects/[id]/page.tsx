@@ -330,6 +330,7 @@ export default function ProjectDetailPage() {
   // Export settings (persisted to DB)
   const [exportTitle, setExportTitle] = useState("");
   const [exportSubtitle, setExportSubtitle] = useState("");
+  const titleLoadedRef = useRef(false);
 
   const supabase = createClient();
 
@@ -343,6 +344,7 @@ export default function ProjectDetailPage() {
       setProject(data);
       if (data.export_title) setExportTitle(data.export_title);
       if (data.export_subtitle) setExportSubtitle(data.export_subtitle);
+      titleLoadedRef.current = true;
     }
   }, [projectId, supabase]);
 
@@ -404,9 +406,10 @@ export default function ProjectDetailPage() {
   }, [loadProject, loadCalls, loadDividers, loadTracker]);
 
   // Auto-save export title/subtitle to DB with debounce
+  // Skip until initial load completes to avoid overwriting saved values with empty strings
   const titleSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (!project) return;
+    if (!project || !titleLoadedRef.current) return;
     if (titleSaveTimer.current) clearTimeout(titleSaveTimer.current);
     titleSaveTimer.current = setTimeout(async () => {
       await supabase
