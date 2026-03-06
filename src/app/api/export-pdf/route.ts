@@ -297,7 +297,7 @@ export async function POST(request: Request) {
     };
 
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const PdfPrinter = require("pdfmake/src/printer");
+    const PdfPrinter = require("pdfmake/js/Printer").default || require("pdfmake/js/Printer");
     const printer = new PdfPrinter(fonts);
 
     // Build document content
@@ -407,7 +407,7 @@ export async function POST(request: Request) {
       content,
     };
 
-    const pdfDoc = printer.createPdfKitDocument(docDefinition);
+    const pdfDoc = await printer.createPdfKitDocument(docDefinition);
     const chunks: Buffer[] = [];
 
     const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {

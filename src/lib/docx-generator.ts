@@ -247,7 +247,7 @@ function renderFallbackParagraphs(text: string): Paragraph[] {
     const trimmed = rawLine.trim();
     if (!trimmed) {
       paragraphs.push(
-        new Paragraph({ spacing: { before: 80, after: 80 }, children: [] })
+        new Paragraph({ spacing: { before: 40, after: 40 }, children: [] })
       );
       continue;
     }
@@ -263,21 +263,21 @@ function renderFallbackParagraphs(text: string): Paragraph[] {
     paragraphs.push(
       new Paragraph({
         spacing: {
-          before: isHeader ? 200 : 60,
-          after: isHeader ? 100 : 60,
+          before: isHeader ? 120 : 20,
+          after: isHeader ? 60 : 20,
         },
         indent: /^\s*(i{1,3}|iv|vi{0,3}|ix|x{0,3})[.)]\s/.test(trimmed)
-          ? { left: 1440 }
+          ? { left: 576 }
           : /^\s*[a-z][.)]\s/.test(trimmed)
-            ? { left: 720 }
+            ? { left: 360 }
             : undefined,
         children: [
           new TextRun({
             text: cleanText,
             bold: isHeader,
-            size: isHeader ? 24 : 22,
+            size: isHeader ? 21 : 21,
             font: "Segoe UI",
-            color: isHeader ? "1a365d" : "000000",
+            color: isHeader ? "0f172a" : "000000",
           }),
         ],
       })
@@ -307,7 +307,7 @@ export async function generateDocx(
         new TextRun({
           text: title,
           bold: true,
-          size: 52,
+          size: 52,  // 26pt matches preview 26px
           font: "Segoe UI",
           color: "1a365d",
         }),
@@ -321,7 +321,7 @@ export async function generateDocx(
       children: [
         new TextRun({
           text: subtitle,
-          size: 28,
+          size: 28,  // 14pt matches preview 14px
           font: "Segoe UI",
           color: "64748b",
         }),
@@ -331,7 +331,7 @@ export async function generateDocx(
   children.push(
     new Paragraph({
       alignment: AlignmentType.CENTER,
-      spacing: { before: 200 },
+      spacing: { before: 160 },
       children: [
         new TextRun({
           text: new Date().toLocaleDateString("en-US", {
@@ -339,7 +339,7 @@ export async function generateDocx(
             day: "numeric",
             year: "numeric",
           }),
-          size: 22,
+          size: 24,  // 12pt matches preview 12px
           font: "Segoe UI",
           color: "94a3b8",
         }),
@@ -353,12 +353,13 @@ export async function generateDocx(
   // ---- TABLE OF CONTENTS PAGE ----
   children.push(
     new Paragraph({
-      spacing: { after: 400 },
+      spacing: { after: 200 },
+      border: { bottom: { style: "single" as const, size: 6, color: "2d5899" } },
       children: [
         new TextRun({
           text: "Table of Contents",
           bold: true,
-          size: 32,
+          size: 32,  // 16pt matches preview 16px
           font: "Segoe UI",
           color: "1a365d",
         }),
@@ -379,22 +380,18 @@ export async function generateDocx(
     // Page break before each call
     children.push(new Paragraph({ children: [new PageBreak()] }));
 
-    // Build heading text: Name - Position - (DD-Mon-YY)
-    let headingText = call.expert_name;
-    if (call.position) {
-      headingText += ` - ${call.position}`;
-    }
-
     // Call header - uses HeadingLevel.HEADING_1 so TOC picks it up
+    // Preview: 18px bold, color #1a365d, border-bottom 2px #2d5899
     children.push(
       new Paragraph({
         heading: HeadingLevel.HEADING_1,
-        spacing: { after: 100 },
+        spacing: { after: 40 },
+        border: { bottom: { style: "single" as const, size: 6, color: "2d5899" } },
         children: [
           new TextRun({
-            text: headingText,
+            text: call.expert_name,
             bold: true,
-            size: 30,
+            size: 36,  // 18pt matches preview 18px
             font: "Segoe UI",
             color: "1a365d",
           }),
@@ -402,14 +399,31 @@ export async function generateDocx(
       })
     );
 
-    // Call date
+    // Position line (preview: 11px, color #475569)
+    if (call.position) {
+      children.push(
+        new Paragraph({
+          spacing: { after: 40 },
+          children: [
+            new TextRun({
+              text: call.position,
+              size: 22,  // 11pt matches preview 11px
+              font: "Segoe UI",
+              color: "475569",
+            }),
+          ],
+        })
+      );
+    }
+
+    // Call date (preview: 11px italic, color #94a3b8, marginBottom 20px)
     children.push(
       new Paragraph({
-        spacing: { after: 300 },
+        spacing: { after: 200 },
         children: [
           new TextRun({
             text: formatCallDate(call.call_date),
-            size: 20,
+            size: 22,  // 11pt matches preview 11px
             font: "Segoe UI",
             color: "94a3b8",
             italics: true,
@@ -424,28 +438,31 @@ export async function generateDocx(
     );
 
     // Render background section
+    // Preview: "Background" is text-sm font-bold text-slate-800 with border-b
     if (background.length > 0) {
       children.push(
         new Paragraph({
-          spacing: { before: 200, after: 150 },
+          spacing: { before: 120, after: 60 },
+          border: { bottom: { style: "single" as const, size: 1, color: "e2e8f0" } },
           children: [
             new TextRun({
               text: "Background",
               bold: true,
-              size: 24,
+              size: 21,
               font: "Segoe UI",
-              color: "1a365d",
+              color: "1e293b",
             }),
           ],
         })
       );
 
       for (const bullet of background) {
-        const bulletBase = { size: 22, font: "Segoe UI", color: "000000" };
+        // Preview: ml-4 (16px ≈ 240 twips), my-0.5, text-sm text-black
+        const bulletBase = { size: 21, font: "Segoe UI", color: "000000" as string };
         children.push(
           new Paragraph({
-            spacing: { before: 80, after: 40 },
-            indent: { left: 360 },
+            spacing: { before: 20, after: 20 },
+            indent: { left: 240 },
             children: [
               new TextRun({ text: "\u2022 ", ...bulletBase }),
               ...parseInlineFormatting(bullet.text, bulletBase),
@@ -453,10 +470,11 @@ export async function generateDocx(
           })
         );
         for (const sub of bullet.subItems) {
+          // Preview: ml-10 (40px ≈ 600 twips)
           children.push(
             new Paragraph({
-              spacing: { before: 40, after: 40 },
-              indent: { left: 720 },
+              spacing: { before: 20, after: 20 },
+              indent: { left: 600 },
               children: [
                 new TextRun({ text: "o ", ...bulletBase }),
                 ...parseInlineFormatting(sub, bulletBase),
@@ -470,16 +488,18 @@ export async function generateDocx(
     // Render summary sections
     if (sections.length > 0) {
       if (background.length > 0) {
+        // Preview: "Summary" same style as "Background" label
         children.push(
           new Paragraph({
-            spacing: { before: 300, after: 150 },
+            spacing: { before: 120, after: 60 },
+            border: { bottom: { style: "single" as const, size: 1, color: "e2e8f0" } },
             children: [
               new TextRun({
                 text: "Summary",
                 bold: true,
-                size: 24,
+                size: 21,
                 font: "Segoe UI",
-                color: "1a365d",
+                color: "1e293b",
               }),
             ],
           })
@@ -488,27 +508,29 @@ export async function generateDocx(
 
       for (const section of sections) {
         const cleanHeader = stripMarkdown(section.header);
+        // Preview: mt-3 mb-1.5 font-bold text-slate-900 text-sm
         children.push(
           new Paragraph({
-            spacing: { before: 300, after: 150 },
+            spacing: { before: 120, after: 40 },
             children: [
               new TextRun({
                 text: `${section.number}. ${cleanHeader}`,
                 bold: true,
-                size: 24,
+                size: 21,
                 font: "Segoe UI",
-                color: "1a365d",
+                color: "0f172a",
               }),
             ],
           })
         );
 
-        const subBase = { size: 22, font: "Segoe UI", color: "000000" };
+        // Preview: ml-6 (24px ≈ 360 twips), my-0.5, text-sm text-black
+        const subBase = { size: 21, font: "Segoe UI", color: "000000" as string };
         for (const sub of section.subBullets) {
           children.push(
             new Paragraph({
-              spacing: { before: 80, after: 80 },
-              indent: { left: 720 },
+              spacing: { before: 20, after: 20 },
+              indent: { left: 360 },
               children: [
                 new TextRun({ text: `${sub.letter}. `, ...subBase }),
                 ...parseInlineFormatting(sub.text, subBase),
@@ -517,10 +539,11 @@ export async function generateDocx(
           );
 
           for (const roman of sub.romanItems) {
+            // Preview: ml-12 (48px ≈ 576 twips)
             children.push(
               new Paragraph({
-                spacing: { before: 40, after: 40 },
-                indent: { left: 1440 },
+                spacing: { before: 20, after: 20 },
+                indent: { left: 576 },
                 children: [
                   new TextRun({ text: `${roman.numeral}. `, ...subBase }),
                   ...parseInlineFormatting(roman.text, subBase),
@@ -547,19 +570,19 @@ export async function generateDocx(
         document: {
           run: {
             font: "Segoe UI",
-            size: 22,
+            size: 21,
             color: "000000",
           },
         },
         heading1: {
           run: {
             font: "Segoe UI",
-            size: 30,
+            size: 36,
             bold: true,
             color: "1a365d",
           },
           paragraph: {
-            spacing: { before: 0, after: 200 },
+            spacing: { before: 0, after: 40 },
           },
         },
       },
