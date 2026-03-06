@@ -36,7 +36,61 @@ function stripMarkdown(text: string): string {
   return text
     .replace(/\*{1,2}/g, "")
     .replace(/_{1,2}/g, "")
+    .replace(/<\/?u>/g, "")
     .trim();
+}
+
+// Render text with inline formatting (bold, italic, underline) using PDFKit
+function renderFormattedPdfText(
+  doc: PDFKit.PDFDocument,
+  text: string,
+  x: number,
+  options: { width: number; fontSize?: number; baseFont?: string; color?: string }
+) {
+  const fontSize = options.fontSize || 10;
+  const baseFont = options.baseFont || "Helvetica";
+  const color = options.color || "#000000";
+  const regex = /(\*\*(.+?)\*\*)|(_(.+?)_)|(<u>(.+?)<\/u>)/g;
+  let lastIndex = 0;
+  let match;
+  const segments: { text: string; bold?: boolean; italic?: boolean; underline?: boolean }[] = [];
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push({ text: text.slice(lastIndex, match.index) });
+    }
+    if (match[2]) {
+      segments.push({ text: match[2], bold: true });
+    } else if (match[4]) {
+      segments.push({ text: match[4], italic: true });
+    } else if (match[6]) {
+      segments.push({ text: match[6], underline: true });
+    }
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    segments.push({ text: text.slice(lastIndex) });
+  }
+
+  // If no formatting found, render plain
+  if (segments.length <= 1 && !segments[0]?.bold && !segments[0]?.italic && !segments[0]?.underline) {
+    doc.font(baseFont).fontSize(fontSize).fillColor(color).text(text, x, doc.y, { width: options.width });
+    return;
+  }
+
+  // Render segments with continued:true
+  segments.forEach((seg, i) => {
+    const isLast = i === segments.length - 1;
+    let font = baseFont;
+    if (seg.bold) font = "Helvetica-Bold";
+    else if (seg.italic) font = "Helvetica-Oblique";
+    doc.font(font).fontSize(fontSize).fillColor(color);
+    if (seg.underline) {
+      doc.text(seg.text, x, doc.y, { width: options.width, continued: !isLast, underline: true });
+    } else {
+      doc.text(seg.text, !isLast ? undefined : x, doc.y, { width: options.width, continued: !isLast });
+    }
+  });
 }
 
 function parseFormattedOutput(text: string): {
@@ -346,23 +400,15 @@ export async function POST(request: Request) {
         doc.moveDown(0.4);
 
         for (const bullet of background) {
-          doc
-            .font("Helvetica")
-            .fontSize(10)
-            .fillColor("#000000")
-            .text(`\u2022 ${bullet.text}`, ml + 15, doc.y, {
-              width: contentWidth - 15,
-            });
+          doc.font("Helvetica").fontSize(10).fillColor("#000000")
+            .text("\u2022 ", ml + 15, doc.y, { width: contentWidth - 15, continued: true });
+          renderFormattedPdfText(doc, bullet.text, ml + 15, { width: contentWidth - 15 });
           doc.moveDown(0.15);
 
           for (const sub of bullet.subItems) {
-            doc
-              .font("Helvetica")
-              .fontSize(10)
-              .fillColor("#000000")
-              .text(`o ${sub}`, ml + 35, doc.y, {
-                width: contentWidth - 35,
-              });
+            doc.font("Helvetica").fontSize(10).fillColor("#000000")
+              .text("o ", ml + 35, doc.y, { width: contentWidth - 35, continued: true });
+            renderFormattedPdfText(doc, sub, ml + 35, { width: contentWidth - 35 });
             doc.moveDown(0.1);
           }
         }
@@ -394,26 +440,18 @@ export async function POST(request: Request) {
             const subX = ml + 25;
             const subWidth = contentWidth - 25;
 
-            doc
-              .font("Helvetica")
-              .fontSize(10)
-              .fillColor("#000000")
-              .text(`${sub.letter}. ${sub.text}`, subX, doc.y, {
-                width: subWidth,
-              });
+            doc.font("Helvetica").fontSize(10).fillColor("#000000")
+              .text(`${sub.letter}. `, subX, doc.y, { width: subWidth, continued: true });
+            renderFormattedPdfText(doc, sub.text, subX, { width: subWidth });
             doc.moveDown(0.15);
 
             for (const roman of sub.romanItems) {
               const romX = ml + 50;
               const romWidth = contentWidth - 50;
 
-              doc
-                .font("Helvetica")
-                .fontSize(10)
-                .fillColor("#000000")
-                .text(`${roman.numeral}. ${roman.text}`, romX, doc.y, {
-                  width: romWidth,
-                });
+              doc.font("Helvetica").fontSize(10).fillColor("#000000")
+                .text(`${roman.numeral}. `, romX, doc.y, { width: romWidth, continued: true });
+              renderFormattedPdfText(doc, roman.text, romX, { width: romWidth });
               doc.moveDown(0.1);
             }
           }

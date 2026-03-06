@@ -14,6 +14,114 @@ import type {
 } from "@/lib/types";
 import Link from "next/link";
 
+// ---- Inline formatting renderer ----
+// Parses **bold**, _italic_, and <u>underline</u> markers within text
+function renderInlineFormatting(text: string, key?: string): React.ReactNode {
+  if (!text) return null;
+
+  const parts: React.ReactNode[] = [];
+  // Pattern matches **bold**, _italic_, or <u>underline</u>
+  const regex = /(\*\*(.+?)\*\*)|(_(.+?)_)|(<u>(.+?)<\/u>)/g;
+  let lastIndex = 0;
+  let match;
+  let partKey = 0;
+
+  while ((match = regex.exec(text)) !== null) {
+    // Add plain text before the match
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+    if (match[2]) {
+      // **bold**
+      parts.push(<strong key={`${key}-b-${partKey++}`}>{match[2]}</strong>);
+    } else if (match[4]) {
+      // _italic_
+      parts.push(<em key={`${key}-i-${partKey++}`}>{match[4]}</em>);
+    } else if (match[6]) {
+      // <u>underline</u>
+      parts.push(<u key={`${key}-u-${partKey++}`}>{match[6]}</u>);
+    }
+    lastIndex = match.index + match[0].length;
+  }
+  // Add remaining text
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+  return parts.length === 1 && typeof parts[0] === "string" ? parts[0] : <>{parts}</>;
+}
+
+// ---- Formatting toolbar for textareas ----
+function FormattingToolbar({ textareaRef, value, onChange }: {
+  textareaRef: React.RefObject<HTMLTextAreaElement | null>;
+  value: string;
+  onChange: (newValue: string) => void;
+}) {
+  function applyFormat(prefix: string, suffix: string) {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    const selected = value.slice(start, end);
+    if (!selected) return;
+
+    // Check if already formatted - if so, remove formatting
+    const beforeStart = start - prefix.length;
+    const afterEnd = end + suffix.length;
+    if (
+      beforeStart >= 0 &&
+      afterEnd <= value.length &&
+      value.slice(beforeStart, start) === prefix &&
+      value.slice(end, afterEnd) === suffix
+    ) {
+      // Remove formatting
+      const newValue = value.slice(0, beforeStart) + selected + value.slice(afterEnd);
+      onChange(newValue);
+      setTimeout(() => {
+        ta.focus();
+        ta.setSelectionRange(beforeStart, beforeStart + selected.length);
+      }, 0);
+      return;
+    }
+
+    const newValue = value.slice(0, start) + prefix + selected + suffix + value.slice(end);
+    onChange(newValue);
+    setTimeout(() => {
+      ta.focus();
+      ta.setSelectionRange(start + prefix.length, end + prefix.length);
+    }, 0);
+  }
+
+  return (
+    <div className="flex items-center gap-1 mb-1">
+      <button
+        type="button"
+        onClick={() => applyFormat("**", "**")}
+        className="px-2 py-0.5 text-xs font-bold border border-slate-300 rounded hover:bg-slate-100 transition-colors"
+        title="Bold (select text first)"
+      >
+        B
+      </button>
+      <button
+        type="button"
+        onClick={() => applyFormat("_", "_")}
+        className="px-2 py-0.5 text-xs italic border border-slate-300 rounded hover:bg-slate-100 transition-colors"
+        title="Italic (select text first)"
+      >
+        I
+      </button>
+      <button
+        type="button"
+        onClick={() => applyFormat("<u>", "</u>")}
+        className="px-2 py-0.5 text-xs underline border border-slate-300 rounded hover:bg-slate-100 transition-colors"
+        title="Underline (select text first)"
+      >
+        U
+      </button>
+      <span className="text-[10px] text-slate-400 ml-1">Select text, then click to format</span>
+    </div>
+  );
+}
+
 // ---- Formatted text renderer ----
 function renderFormattedText(text: string) {
   if (!text) return null;
@@ -26,7 +134,8 @@ function renderFormattedText(text: string) {
       elements.push(<div key={i} className="h-2" />);
       return;
     }
-    const clean = line.replace(/\*{1,2}/g, "").replace(/_{1,2}/g, "");
+    // Strip markers only for pattern matching; render inline formatting for display
+    const clean = line.replace(/\*{1,2}/g, "").replace(/_{1,2}/g, "").replace(/<\/?u>/g, "");
 
     // Section labels: Background, Summary
     if (clean.match(/^(Background|Summary)\s*$/i)) {
@@ -41,9 +150,11 @@ function renderFormattedText(text: string) {
     // Background bullets: "* text"
     const bgBulletMatch = clean.match(/^\*\s+(.+)$/);
     if (bgBulletMatch) {
+      // Extract the raw text after "* " for inline formatting
+      const rawText = line.replace(/^\*{1,2}\s*\*\s+/, "").replace(/^\*\s+/, "");
       elements.push(
         <div key={i} className="ml-4 my-0.5 text-black text-sm">
-          <span className="mr-1">{"\u2022"}</span> {bgBulletMatch[1]}
+          <span className="mr-1">{"\u2022"}</span> {renderInlineFormatting(rawText || bgBulletMatch[1], `l${i}`)}
         </div>
       );
       return;
@@ -52,9 +163,10 @@ function renderFormattedText(text: string) {
     // Background sub-bullets: "o text"
     const bgSubMatch = clean.match(/^o\s+(.+)$/);
     if (bgSubMatch) {
+      const rawText = line.replace(/^o\s+/, "");
       elements.push(
         <div key={i} className="ml-10 my-0.5 text-black text-sm">
-          <span className="mr-1">o</span> {bgSubMatch[1]}
+          <span className="mr-1">o</span> {renderInlineFormatting(rawText || bgSubMatch[1], `l${i}`)}
         </div>
       );
       return;
@@ -65,9 +177,9 @@ function renderFormattedText(text: string) {
       elements.push(
         <div
           key={i}
-          className="mt-3 mb-1.5 font-semibold text-slate-900 text-sm"
+          className="mt-3 mb-1.5 font-bold text-slate-900 text-sm"
         >
-          {headerMatch[1]}. {headerMatch[2]}
+          {headerMatch[1]}. {renderInlineFormatting(headerMatch[2], `l${i}`)}
         </div>
       );
       return;
@@ -77,9 +189,9 @@ function renderFormattedText(text: string) {
       elements.push(
         <div
           key={i}
-          className="mt-3 mb-1.5 font-semibold text-slate-900 text-sm"
+          className="mt-3 mb-1.5 font-bold text-slate-900 text-sm"
         >
-          {mdMatch[1]}
+          {renderInlineFormatting(mdMatch[1], `l${i}`)}
         </div>
       );
       return;
@@ -88,27 +200,29 @@ function renderFormattedText(text: string) {
       /^(i{1,3}|iv|vi{0,3}|ix|x{0,3})[.)]\s+(.+)$/
     );
     if (romanMatch) {
+      const rawAfterNumeral = line.replace(/^(i{1,3}|iv|vi{0,3}|ix|x{0,3})[.)]\s+/, "");
       elements.push(
         <div key={i} className="ml-12 my-0.5 text-black text-sm">
           {romanMatch[1]}.{" "}
-          {romanMatch[2]}
+          {renderInlineFormatting(rawAfterNumeral || romanMatch[2], `l${i}`)}
         </div>
       );
       return;
     }
     const subMatch = clean.match(/^([a-z])[.)]\s+(.+)$/);
     if (subMatch) {
+      const rawAfterLetter = line.replace(/^[a-z][.)]\s+/, "");
       elements.push(
         <div key={i} className="ml-6 my-0.5 text-black text-sm">
           <span className="font-medium">{subMatch[1]}.</span>{" "}
-          {subMatch[2]}
+          {renderInlineFormatting(rawAfterLetter || subMatch[2], `l${i}`)}
         </div>
       );
       return;
     }
     elements.push(
       <div key={i} className="my-0.5 text-black text-sm">
-        {clean}
+        {renderInlineFormatting(line, `l${i}`)}
       </div>
     );
   });
@@ -163,6 +277,10 @@ export default function ProjectDetailPage() {
   );
   const [manualFormattedNotes, setManualFormattedNotes] = useState("");
   const [submittingManual, setSubmittingManual] = useState(false);
+  const manualTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const [showEditPreview, setShowEditPreview] = useState(false);
+  const [showManualPreview, setShowManualPreview] = useState(false);
 
   // Tracker
   const [tracker, setTracker] = useState<TrackerFile | null>(null);
@@ -405,38 +523,44 @@ export default function ProjectDetailPage() {
     if (!manualExpertName.trim() || !manualFormattedNotes.trim()) return;
     setSubmittingManual(true);
 
-    const { error } = await supabase
-      .from("expert_calls")
-      .insert({
-        project_id: projectId,
-        expert_name: manualExpertName.trim(),
-        position: manualPosition.trim() || null,
-        call_date: manualCallDate,
-        raw_notes: "",
-        formatted_output: manualFormattedNotes,
-        entry_type: "manual",
-        sort_order: items.length,
-      });
+    try {
+      const { error } = await supabase
+        .from("expert_calls")
+        .insert({
+          project_id: projectId,
+          expert_name: manualExpertName.trim(),
+          position: manualPosition.trim() || null,
+          call_date: manualCallDate,
+          raw_notes: "",
+          formatted_output: manualFormattedNotes,
+          entry_type: "manual",
+          sort_order: items.length,
+        });
 
-    if (error) {
-      console.error("Failed to save manual entry:", error);
+      if (error) {
+        console.error("Failed to save manual entry:", error);
+        alert(`Failed to save manual entry: ${error.message}`);
+        return;
+      }
+
+      await supabase
+        .from("projects")
+        .update({ updated_at: new Date().toISOString() })
+        .eq("id", projectId);
+
+      setManualExpertName("");
+      setManualPosition("");
+      setManualCallDate(new Date().toISOString().split("T")[0]);
+      setManualFormattedNotes("");
+      setShowManualForm(false);
+      loadCalls();
+      loadProject();
+    } catch (err) {
+      console.error("Error saving manual entry:", err);
+      alert("An unexpected error occurred while saving.");
+    } finally {
       setSubmittingManual(false);
-      return;
     }
-
-    await supabase
-      .from("projects")
-      .update({ updated_at: new Date().toISOString() })
-      .eq("id", projectId);
-
-    setManualExpertName("");
-    setManualPosition("");
-    setManualCallDate(new Date().toISOString().split("T")[0]);
-    setManualFormattedNotes("");
-    setShowManualForm(false);
-    setSubmittingManual(false);
-    loadCalls();
-    loadProject();
   }
 
   // ---- Tracker upload ----
@@ -1666,17 +1790,40 @@ export default function ProjectDetailPage() {
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">
-                  Full Formatted Notes *
-                </label>
-                <textarea
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-medium text-slate-600">
+                    Full Formatted Notes *
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowManualPreview(!showManualPreview)}
+                    className="text-[10px] px-2 py-0.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors"
+                  >
+                    {showManualPreview ? "Hide Preview" : "Show Preview"}
+                  </button>
+                </div>
+                <FormattingToolbar
+                  textareaRef={manualTextareaRef}
                   value={manualFormattedNotes}
-                  onChange={(e) => setManualFormattedNotes(e.target.value)}
-                  required
-                  rows={15}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs input-font"
-                  placeholder="Paste your complete formatted notes here..."
+                  onChange={setManualFormattedNotes}
                 />
+                <div className={showManualPreview ? "grid grid-cols-2 gap-3" : ""}>
+                  <textarea
+                    ref={manualTextareaRef}
+                    value={manualFormattedNotes}
+                    onChange={(e) => setManualFormattedNotes(e.target.value)}
+                    required
+                    rows={15}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs input-font"
+                    placeholder="Paste your complete formatted notes here..."
+                  />
+                  {showManualPreview && manualFormattedNotes && (
+                    <div className="p-3 bg-slate-50 rounded-lg border border-slate-100 overflow-y-auto max-h-[400px]">
+                      <div className="text-[10px] text-slate-400 mb-2 font-medium uppercase tracking-wide">Preview</div>
+                      {renderFormattedText(manualFormattedNotes)}
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="flex items-center gap-2 pt-1">
                 <button
@@ -1904,20 +2051,45 @@ export default function ProjectDetailPage() {
                       </div>
                       {editForm.formatted_output && (
                         <div>
-                          <label className="block text-xs font-medium text-slate-500 mb-1">
-                            Formatted Output
-                          </label>
-                          <textarea
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="block text-xs font-medium text-slate-500">
+                              Formatted Output
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => setShowEditPreview(!showEditPreview)}
+                              className="text-[10px] px-2 py-0.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors"
+                            >
+                              {showEditPreview ? "Hide Preview" : "Show Preview"}
+                            </button>
+                          </div>
+                          <FormattingToolbar
+                            textareaRef={editTextareaRef}
                             value={editForm.formatted_output}
-                            onChange={(e) =>
-                              setEditForm({
-                                ...editForm,
-                                formatted_output: e.target.value,
-                              })
+                            onChange={(val) =>
+                              setEditForm({ ...editForm, formatted_output: val })
                             }
-                            rows={25}
-                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs input-font"
                           />
+                          <div className={showEditPreview ? "grid grid-cols-2 gap-3" : ""}>
+                            <textarea
+                              ref={editTextareaRef}
+                              value={editForm.formatted_output}
+                              onChange={(e) =>
+                                setEditForm({
+                                  ...editForm,
+                                  formatted_output: e.target.value,
+                                })
+                              }
+                              rows={25}
+                              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs input-font"
+                            />
+                            {showEditPreview && editForm.formatted_output && (
+                              <div className="p-3 bg-slate-50 rounded-lg border border-slate-100 overflow-y-auto max-h-[600px]">
+                                <div className="text-[10px] text-slate-400 mb-2 font-medium uppercase tracking-wide">Preview</div>
+                                {renderFormattedText(editForm.formatted_output)}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>

@@ -35,7 +35,38 @@ interface BackgroundBullet {
 }
 
 function stripMarkdown(text: string): string {
-  return text.replace(/\*{1,2}/g, "").replace(/_{1,2}/g, "").trim();
+  return text.replace(/\*{1,2}/g, "").replace(/_{1,2}/g, "").replace(/<\/?u>/g, "").trim();
+}
+
+// Parse inline formatting markers and return TextRun elements
+function parseInlineFormatting(
+  text: string,
+  baseOptions: { size: number; font: string; color: string; bold?: boolean; italics?: boolean }
+): TextRun[] {
+  const runs: TextRun[] = [];
+  const regex = /(\*\*(.+?)\*\*)|(_(.+?)_)|(<u>(.+?)<\/u>)/g;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      runs.push(new TextRun({ text: text.slice(lastIndex, match.index), ...baseOptions }));
+    }
+    if (match[2]) {
+      runs.push(new TextRun({ text: match[2], ...baseOptions, bold: true }));
+    } else if (match[4]) {
+      runs.push(new TextRun({ text: match[4], ...baseOptions, italics: true }));
+    } else if (match[6]) {
+      runs.push(new TextRun({ text: match[6], ...baseOptions, underline: { type: "single" } }));
+    }
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    runs.push(new TextRun({ text: text.slice(lastIndex), ...baseOptions }));
+  }
+
+  return runs.length > 0 ? runs : [new TextRun({ text, ...baseOptions })];
 }
 
 function parseFormattedOutput(text: string): {
@@ -402,17 +433,14 @@ export async function generateDocx(
       );
 
       for (const bullet of background) {
+        const bulletBase = { size: 22, font: "Segoe UI", color: "000000" };
         children.push(
           new Paragraph({
             spacing: { before: 80, after: 40 },
             indent: { left: 360 },
             children: [
-              new TextRun({
-                text: `\u2022 ${bullet.text}`,
-                size: 22,
-                font: "Segoe UI",
-                color: "000000",
-              }),
+              new TextRun({ text: "\u2022 ", ...bulletBase }),
+              ...parseInlineFormatting(bullet.text, bulletBase),
             ],
           })
         );
@@ -422,12 +450,8 @@ export async function generateDocx(
               spacing: { before: 40, after: 40 },
               indent: { left: 720 },
               children: [
-                new TextRun({
-                  text: `o ${sub}`,
-                  size: 22,
-                  font: "Segoe UI",
-                  color: "000000",
-                }),
+                new TextRun({ text: "o ", ...bulletBase }),
+                ...parseInlineFormatting(sub, bulletBase),
               ],
             })
           );
@@ -470,18 +494,15 @@ export async function generateDocx(
           })
         );
 
+        const subBase = { size: 22, font: "Segoe UI", color: "000000" };
         for (const sub of section.subBullets) {
           children.push(
             new Paragraph({
               spacing: { before: 80, after: 80 },
               indent: { left: 720 },
               children: [
-                new TextRun({
-                  text: `${sub.letter}. ${sub.text}`,
-                  size: 22,
-                  font: "Segoe UI",
-                  color: "000000",
-                }),
+                new TextRun({ text: `${sub.letter}. `, ...subBase }),
+                ...parseInlineFormatting(sub.text, subBase),
               ],
             })
           );
@@ -492,12 +513,8 @@ export async function generateDocx(
                 spacing: { before: 40, after: 40 },
                 indent: { left: 1440 },
                 children: [
-                  new TextRun({
-                    text: `${roman.numeral}. ${roman.text}`,
-                    size: 22,
-                    font: "Segoe UI",
-                    color: "000000",
-                  }),
+                  new TextRun({ text: `${roman.numeral}. `, ...subBase }),
+                  ...parseInlineFormatting(roman.text, subBase),
                 ],
               })
             );
