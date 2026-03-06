@@ -335,7 +335,7 @@ export async function POST(request: Request) {
         .fillColor("#1a365d")
         .text(`${i + 1}. `, ml, doc.y, { continued: true, goTo: `call-${i}` });
       doc
-        .font("Helvetica-Bold")
+        .font("Helvetica")
         .fontSize(10)
         .fillColor("#1a365d")
         .text(tocText, { goTo: `call-${i}` });

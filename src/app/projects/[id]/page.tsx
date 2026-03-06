@@ -279,8 +279,14 @@ export default function ProjectDetailPage() {
   const [submittingManual, setSubmittingManual] = useState(false);
   const manualTextareaRef = useRef<HTMLTextAreaElement>(null);
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const viewEditTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [showEditPreview, setShowEditPreview] = useState(false);
   const [showManualPreview, setShowManualPreview] = useState(false);
+
+  // Inline view-output editing
+  const [viewEditingCallId, setViewEditingCallId] = useState<string | null>(null);
+  const [viewEditText, setViewEditText] = useState("");
+  const [savingViewEdit, setSavingViewEdit] = useState(false);
 
   // Tracker
   const [tracker, setTracker] = useState<TrackerFile | null>(null);
@@ -777,6 +783,31 @@ export default function ProjectDetailPage() {
     setSavingEdit(false);
     loadCalls();
     loadProject();
+  }
+
+  // ---- Save view-output inline edit ----
+  async function handleSaveViewEdit() {
+    if (!viewEditingCallId) return;
+    setSavingViewEdit(true);
+    try {
+      await supabase
+        .from("expert_calls")
+        .update({ formatted_output: viewEditText || null })
+        .eq("id", viewEditingCallId);
+      await supabase
+        .from("projects")
+        .update({ updated_at: new Date().toISOString() })
+        .eq("id", projectId);
+      setViewEditingCallId(null);
+      setViewEditText("");
+      loadCalls();
+      loadProject();
+    } catch (err) {
+      console.error("Error saving view edit:", err);
+      alert("Failed to save changes.");
+    } finally {
+      setSavingViewEdit(false);
+    }
   }
 
   // ---- Delete call ----
@@ -2211,11 +2242,66 @@ export default function ProjectDetailPage() {
                         </div>
                       )}
 
-                      {/* Formatted output view */}
+                      {/* Formatted output view / edit */}
                       {viewingCall?.id === call.id &&
                         call.formatted_output && (
                           <div className="mt-3 p-4 bg-slate-50 rounded-lg border border-slate-100 ml-6">
-                            {renderFormattedText(call.formatted_output)}
+                            {/* Toggle between view and inline edit */}
+                            <div className="flex items-center justify-between mb-3">
+                              <span className="text-[10px] text-slate-400 font-medium uppercase tracking-wide">
+                                {viewEditingCallId === call.id ? "Edit Output" : "Formatted Output"}
+                              </span>
+                              <div className="flex items-center gap-2">
+                                {viewEditingCallId === call.id ? (
+                                  <>
+                                    <button
+                                      onClick={handleSaveViewEdit}
+                                      disabled={savingViewEdit}
+                                      className="px-3 py-1 bg-blue-700 text-white rounded-md hover:bg-blue-800 disabled:opacity-50 text-xs font-medium transition-colors"
+                                    >
+                                      {savingViewEdit ? "Saving..." : "Save"}
+                                    </button>
+                                    <button
+                                      onClick={() => { setViewEditingCallId(null); setViewEditText(""); }}
+                                      className="px-3 py-1 bg-slate-200 text-slate-600 rounded-md hover:bg-slate-300 text-xs font-medium transition-colors"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button
+                                    onClick={() => { setViewEditingCallId(call.id); setViewEditText(call.formatted_output || ""); }}
+                                    className="px-3 py-1 bg-slate-200 text-slate-600 rounded-md hover:bg-slate-300 text-xs font-medium transition-colors"
+                                  >
+                                    Edit Formatting
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                            {viewEditingCallId === call.id ? (
+                              <div>
+                                <FormattingToolbar
+                                  textareaRef={viewEditTextareaRef}
+                                  value={viewEditText}
+                                  onChange={setViewEditText}
+                                />
+                                <div className="grid grid-cols-2 gap-3">
+                                  <textarea
+                                    ref={viewEditTextareaRef}
+                                    value={viewEditText}
+                                    onChange={(e) => setViewEditText(e.target.value)}
+                                    rows={25}
+                                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs input-font bg-white"
+                                  />
+                                  <div className="p-3 bg-white rounded-lg border border-slate-200 overflow-y-auto max-h-[600px]">
+                                    <div className="text-[10px] text-slate-400 mb-2 font-medium uppercase tracking-wide">Preview</div>
+                                    {renderFormattedText(viewEditText)}
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              renderFormattedText(call.formatted_output)
+                            )}
                           </div>
                         )}
                     </div>
