@@ -142,10 +142,10 @@ function parseFormattedOutput(text: string): {
         currentSubBullet = null;
       }
       if (currentSection) sections.push(currentSection);
-      const rawHeader = trimmedLine.replace(/^\s*(?:#{1,3}\s+)?\d+\.\s+/, "");
+      // Use cleanLine match for header text — headers are bold by style, not markers
       currentSection = {
         number: numberedHeaderMatch[1],
-        header: rawHeader,
+        header: numberedHeaderMatch[2].trim(),
         subBullets: [],
       };
       if (!inSummary) inSummary = true;
@@ -158,10 +158,9 @@ function parseFormattedOutput(text: string): {
         currentSubBullet = null;
       }
       if (currentSection) sections.push(currentSection);
-      const rawHeader = trimmedLine.replace(/^\s*#{1,3}\s+/, "");
       currentSection = {
         number: String(sections.length + 1),
-        header: rawHeader,
+        header: markdownHeaderMatch[1].trim(),
         subBullets: [],
       };
       continue;
@@ -507,14 +506,14 @@ export async function generateDocx(
       }
 
       for (const section of sections) {
-        const cleanHeader = stripMarkdown(section.header);
         // Preview: mt-3 mb-1.5 font-bold text-slate-900 text-sm
+        // header text is already clean (from cleanLine match)
         children.push(
           new Paragraph({
             spacing: { before: 120, after: 40 },
             children: [
               new TextRun({
-                text: `${section.number}. ${cleanHeader}`,
+                text: `${section.number}. ${section.header}`,
                 bold: true,
                 size: 21,
                 font: "Segoe UI",

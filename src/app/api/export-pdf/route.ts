@@ -39,7 +39,74 @@ function formatTocDate(dateStr: string): string {
   return `${day}-${month}-${year}`;
 }
 
-// Parse formatted_output into structured sections (clean text, no markers)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type PdfContent = any;
+
+// Parse inline formatting markers (**bold**, _italic_, <u>underline</u>) into pdfmake text array
+function parseInlineFormattingPdf(
+  text: string,
+  baseStyle: { fontSize: number; color: string; bold?: boolean; italics?: boolean }
+): PdfContent {
+  const regex = /(\*\*(.+?)\*\*)|(_(.+?)_)|(<u>(.+?)<\/u>)/g;
+  let lastIndex = 0;
+  let match;
+  const parts: PdfContent[] = [];
+  let hasFormatting = false;
+
+  while ((match = regex.exec(text)) !== null) {
+    hasFormatting = true;
+    if (match.index > lastIndex) {
+      parts.push({ text: text.slice(lastIndex, match.index), ...baseStyle });
+    }
+    if (match[2]) {
+      parts.push({ text: match[2], ...baseStyle, bold: true });
+    } else if (match[4]) {
+      parts.push({ text: match[4], ...baseStyle, italics: true });
+    } else if (match[6]) {
+      parts.push({ text: match[6], ...baseStyle, decoration: "underline" });
+    }
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (!hasFormatting) {
+    // No formatting markers found — return clean text as simple string
+    return stripMarkdown(text);
+  }
+
+  if (lastIndex < text.length) {
+    parts.push({ text: text.slice(lastIndex), ...baseStyle });
+  }
+
+  return parts;
+}
+
+// Build a pdfmake text node with optional prefix and inline formatting
+function buildFormattedTextNode(
+  prefix: string,
+  rawText: string,
+  baseStyle: { fontSize: number; color: string },
+  margin: number[],
+): PdfContent {
+  const formatted = parseInlineFormattingPdf(rawText, baseStyle);
+  if (Array.isArray(formatted)) {
+    // Has inline formatting — build text array with prefix
+    return {
+      text: [
+        { text: prefix, ...baseStyle },
+        ...formatted,
+      ],
+      margin,
+    };
+  }
+  // Plain text
+  return {
+    text: `${prefix}${formatted}`,
+    ...baseStyle,
+    margin,
+  };
+}
+
+// Parse formatted_output into structured sections, preserving raw markers for inline formatting
 function parseFormattedOutput(text: string): {
   background: { text: string; subItems: string[] }[];
   sections: { number: string; header: string; subBullets: { letter: string; text: string; romanItems: { numeral: string; text: string }[] }[] }[];
@@ -58,6 +125,7 @@ function parseFormattedOutput(text: string): {
     const line = rawLine.trimEnd();
     if (!line.trim()) continue;
 
+    const trimmedLine = line.trim(); // preserves formatting markers
     const cleanLine = stripMarkdown(line);
 
     if (cleanLine.match(/^Background\s*$/i)) {
@@ -76,16 +144,19 @@ function parseFormattedOutput(text: string): {
       const bgBulletMatch = cleanLine.match(/^\*\s+(.+)$/);
       if (bgBulletMatch) {
         if (currentBgBullet) background.push(currentBgBullet);
-        currentBgBullet = { text: bgBulletMatch[1], subItems: [] };
+        // Use trimmedLine to preserve inline formatting markers
+        const rawText = trimmedLine.replace(/^\*\s+/, "");
+        currentBgBullet = { text: rawText, subItems: [] };
         continue;
       }
       const bgSubMatch = cleanLine.match(/^\s*o\s+(.+)$/);
       if (bgSubMatch && currentBgBullet) {
-        currentBgBullet.subItems.push(bgSubMatch[1]);
+        const rawSubText = trimmedLine.replace(/^\s*o\s+/, "");
+        currentBgBullet.subItems.push(rawSubText);
         continue;
       }
       if (currentBgBullet) {
-        currentBgBullet.text += " " + cleanLine;
+        currentBgBullet.text += " " + trimmedLine;
       }
       continue;
     }
@@ -96,6 +167,7 @@ function parseFormattedOutput(text: string): {
     if (numberedHeaderMatch) {
       if (currentSubBullet && currentSection) { currentSection.subBullets.push(currentSubBullet); currentSubBullet = null; }
       if (currentSection) sections.push(currentSection);
+      // Use clean header text (markers stripped) — headers are bold by style
       currentSection = { number: numberedHeaderMatch[1], header: numberedHeaderMatch[2].trim(), subBullets: [] };
       if (!inSummary) inSummary = true;
       continue;
@@ -110,19 +182,21 @@ function parseFormattedOutput(text: string): {
 
     const romanMatch = cleanLine.match(/^\s*(i{1,3}|iv|vi{0,3}|ix|x{0,3})[.)]\s+(.+)$/);
     if (romanMatch && currentSubBullet) {
-      currentSubBullet.romanItems.push({ numeral: romanMatch[1], text: romanMatch[2].trim() });
+      const rawRomanText = trimmedLine.replace(/^\s*(i{1,3}|iv|vi{0,3}|ix|x{0,3})[.)]\s+/, "");
+      currentSubBullet.romanItems.push({ numeral: romanMatch[1], text: rawRomanText });
       continue;
     }
 
     const subBulletMatch = cleanLine.match(/^\s*([a-z])[.)]\s+(.+)$/);
     if (subBulletMatch && currentSection) {
       if (currentSubBullet) currentSection.subBullets.push(currentSubBullet);
-      currentSubBullet = { letter: subBulletMatch[1], text: subBulletMatch[2].trim(), romanItems: [] };
+      const rawSubText = trimmedLine.replace(/^\s*[a-z][.)]\s+/, "");
+      currentSubBullet = { letter: subBulletMatch[1], text: rawSubText, romanItems: [] };
       continue;
     }
 
     if (currentSubBullet) {
-      currentSubBullet.text += " " + cleanLine;
+      currentSubBullet.text += " " + trimmedLine;
     } else if (currentSection) {
       currentSection.header += " " + cleanLine;
     }
@@ -135,44 +209,45 @@ function parseFormattedOutput(text: string): {
   return { background, sections };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type PdfContent = any;
-
 // Colors matching the browser preview exactly
 const COLORS = {
-  navyHeading: "#1a365d",    // title, call name, TOC heading
-  darkText: "#0f172a",       // numbered section headers (text-slate-900)
-  sectionLabel: "#1e293b",   // Background/Summary labels (text-slate-800)
-  bodyText: "#000000",       // body text (text-black)
-  subtitleGray: "#64748b",   // subtitle, position text
-  mutedGray: "#94a3b8",      // date, page numbers
-  accentBlue: "#2d5899",     // divider lines
-  borderLight: "#e2e8f0",    // light borders (border-slate-200)
-  tocEntry: "#0f172a",       // TOC entry text
+  navyHeading: "#1a365d",
+  darkText: "#0f172a",       // text-slate-900
+  sectionLabel: "#1e293b",   // text-slate-800
+  bodyText: "#000000",
+  subtitleGray: "#64748b",
+  mutedGray: "#94a3b8",
+  accentBlue: "#2d5899",
+  borderLight: "#e2e8f0",
+  tocEntry: "#0f172a",
 };
 
-// Font sizes: preview px * 0.75 = pt (approximate)
 const SIZES = {
-  titlePage: 26,       // preview 26px → large title
-  subtitle: 14,        // preview 14px
-  titleDate: 12,       // preview 12px
-  tocHeading: 16,      // preview 16px
-  tocEntry: 10,        // preview 13px scaled for A4
-  tocPageNum: 9,       // preview 11px scaled
-  callName: 15,        // preview 18px → 13.5pt, slightly up for readability
-  callPosition: 9,     // preview 11px
-  callDate: 9,         // preview 11px
-  sectionLabel: 10.5,  // preview 14px text-sm → 10.5pt
-  numberedHeader: 10.5,// preview 14px text-sm bold
-  bodyText: 10.5,      // preview 14px text-sm
+  titlePage: 26,
+  subtitle: 14,
+  titleDate: 12,
+  tocHeading: 16,
+  tocEntry: 10,
+  tocPageNum: 9,
+  callName: 15,
+  callPosition: 9,
+  callDate: 9,
+  sectionLabel: 10.5,
+  numberedHeader: 10.5,
+  bodyText: 10.5,
 };
+
+// Content width for A4 with 56pt margins: 595.28 - 56 - 56 = 483.28
+const CONTENT_WIDTH = 483;
 
 function buildCallContent(call: CallData, callIndex: number): PdfContent[] {
   const content: PdfContent[] = [];
   const { background, sections } = parseFormattedOutput(call.formatted_output);
   const anchorId = `call_${callIndex}`;
 
-  // Call header (preview: 18px bold #1a365d, border-bottom 2px #2d5899)
+  const bodyStyle = { fontSize: SIZES.bodyText, color: COLORS.bodyText };
+
+  // Call header
   content.push({
     text: call.expert_name,
     id: anchorId,
@@ -182,7 +257,7 @@ function buildCallContent(call: CallData, callIndex: number): PdfContent[] {
     margin: [0, 0, 0, 3],
   });
 
-  // Position (preview: 11px #475569)
+  // Position
   if (call.position) {
     content.push({
       text: call.position,
@@ -192,13 +267,13 @@ function buildCallContent(call: CallData, callIndex: number): PdfContent[] {
     });
   }
 
-  // Border line under header (preview: border-bottom 2px solid #2d5899)
+  // Accent line under header
   content.push({
-    canvas: [{ type: "line", x1: 0, y1: 0, x2: 475, y2: 0, lineWidth: 1.5, lineColor: COLORS.accentBlue }],
+    canvas: [{ type: "line", x1: 0, y1: 0, x2: CONTENT_WIDTH, y2: 0, lineWidth: 1.5, lineColor: COLORS.accentBlue }],
     margin: [0, 0, 0, 3],
   });
 
-  // Date (preview: 11px italic #94a3b8, marginBottom 20px)
+  // Date
   content.push({
     text: formatDate(call.call_date),
     fontSize: SIZES.callDate,
@@ -209,31 +284,21 @@ function buildCallContent(call: CallData, callIndex: number): PdfContent[] {
 
   // Background section
   if (background.length > 0) {
-    // Label (preview: text-sm font-bold text-slate-800, border-b border-slate-200)
+    // Label with bottom border
     content.push({
       stack: [
         { text: "Background", fontSize: SIZES.sectionLabel, bold: true, color: COLORS.sectionLabel },
-        { canvas: [{ type: "line", x1: 0, y1: 0, x2: 475, y2: 0, lineWidth: 0.5, lineColor: COLORS.borderLight }], margin: [0, 2, 0, 0] },
+        { canvas: [{ type: "line", x1: 0, y1: 0, x2: CONTENT_WIDTH, y2: 0, lineWidth: 0.5, lineColor: COLORS.borderLight }], margin: [0, 2, 0, 0] },
       ],
       margin: [0, 8, 0, 5],
     });
 
     for (const bullet of background) {
-      // Preview: ml-4 (16px ≈ 12pt), my-0.5
-      content.push({
-        text: `\u2022 ${bullet.text}`,
-        fontSize: SIZES.bodyText,
-        color: COLORS.bodyText,
-        margin: [12, 1, 0, 1],
-      });
+      // ml-4 indent with bullet char, inline formatting preserved
+      content.push(buildFormattedTextNode("\u2022 ", bullet.text, bodyStyle, [12, 1, 0, 1]));
       for (const sub of bullet.subItems) {
-        // Preview: ml-10 (40px ≈ 30pt)
-        content.push({
-          text: `o ${sub}`,
-          fontSize: SIZES.bodyText,
-          color: COLORS.bodyText,
-          margin: [30, 1, 0, 1],
-        });
+        // ml-10 indent
+        content.push(buildFormattedTextNode("o ", sub, bodyStyle, [30, 1, 0, 1]));
       }
     }
   }
@@ -241,18 +306,17 @@ function buildCallContent(call: CallData, callIndex: number): PdfContent[] {
   // Summary sections
   if (sections.length > 0) {
     if (background.length > 0) {
-      // Summary label (same style as Background label)
       content.push({
         stack: [
           { text: "Summary", fontSize: SIZES.sectionLabel, bold: true, color: COLORS.sectionLabel },
-          { canvas: [{ type: "line", x1: 0, y1: 0, x2: 475, y2: 0, lineWidth: 0.5, lineColor: COLORS.borderLight }], margin: [0, 2, 0, 0] },
+          { canvas: [{ type: "line", x1: 0, y1: 0, x2: CONTENT_WIDTH, y2: 0, lineWidth: 0.5, lineColor: COLORS.borderLight }], margin: [0, 2, 0, 0] },
         ],
         margin: [0, 8, 0, 5],
       });
     }
 
     for (const section of sections) {
-      // Preview: mt-3 mb-1.5 font-bold text-slate-900 text-sm
+      // Numbered header — bold by style, text already clean
       content.push({
         text: `${section.number}. ${section.header}`,
         fontSize: SIZES.numberedHeader,
@@ -262,27 +326,17 @@ function buildCallContent(call: CallData, callIndex: number): PdfContent[] {
       });
 
       for (const sub of section.subBullets) {
-        // Preview: ml-6 (24px ≈ 18pt), my-0.5, letter font-medium
-        content.push({
-          text: `${sub.letter}. ${sub.text}`,
-          fontSize: SIZES.bodyText,
-          color: COLORS.bodyText,
-          margin: [18, 1, 0, 1],
-        });
+        // Letter sub-bullets with inline formatting
+        content.push(buildFormattedTextNode(`${sub.letter}. `, sub.text, bodyStyle, [18, 1, 0, 1]));
 
         for (const roman of sub.romanItems) {
-          // Preview: ml-12 (48px ≈ 36pt)
-          content.push({
-            text: `${roman.numeral}. ${roman.text}`,
-            fontSize: SIZES.bodyText,
-            color: COLORS.bodyText,
-            margin: [36, 1, 0, 1],
-          });
+          // Roman numeral items with inline formatting
+          content.push(buildFormattedTextNode(`${roman.numeral}. `, roman.text, bodyStyle, [36, 1, 0, 1]));
         }
       }
     }
   } else if (background.length === 0) {
-    // Fallback: render as plain paragraphs
+    // Fallback: render line-by-line with inline formatting
     const lines = call.formatted_output.split("\n");
     for (const rawLine of lines) {
       const trimmed = rawLine.trim();
@@ -292,13 +346,22 @@ function buildCallContent(call: CallData, callIndex: number): PdfContent[] {
       }
       const cleanText = stripMarkdown(trimmed);
       const isHeader = /^#{1,6}\s/.test(trimmed) || /^\d+\.\s/.test(trimmed);
-      content.push({
-        text: cleanText,
-        fontSize: isHeader ? SIZES.numberedHeader : SIZES.bodyText,
-        bold: isHeader,
-        color: isHeader ? COLORS.darkText : COLORS.bodyText,
-        margin: [0, 1, 0, 1],
-      });
+      if (isHeader) {
+        content.push({
+          text: cleanText.replace(/^#{1,6}\s+/, ""),
+          fontSize: SIZES.numberedHeader,
+          bold: true,
+          color: COLORS.darkText,
+          margin: [0, 1, 0, 1],
+        });
+      } else {
+        const formatted = parseInlineFormattingPdf(trimmed, bodyStyle);
+        content.push({
+          text: formatted,
+          ...bodyStyle,
+          margin: [0, 1, 0, 1],
+        });
+      }
     }
   }
 
@@ -333,35 +396,32 @@ export async function POST(request: Request) {
     const PdfPrinter = require("pdfmake/js/Printer").default || require("pdfmake/js/Printer");
     const printer = new PdfPrinter(fonts);
 
-    // Build document content
     const content: PdfContent[] = [];
 
     // ---- TITLE PAGE ----
-    // Preview: centered, padding 80px, title 26px bold #1a365d
-    content.push({ text: "", margin: [0, 160, 0, 0] });
+    // Vertically centered content
+    content.push({ text: "", margin: [0, 200, 0, 0] });
     content.push({
       text: title,
       fontSize: SIZES.titlePage,
       bold: true,
       color: COLORS.navyHeading,
       alignment: "center",
-      margin: [0, 0, 0, 10],
+      margin: [0, 0, 0, 12],
     });
-    // Preview: 80px wide divider, 2px solid #2d5899
+    // Centered 60pt divider line
+    const lineStart = (CONTENT_WIDTH - 60) / 2;
     content.push({
-      canvas: [{ type: "line", x1: 195, y1: 0, x2: 280, y2: 0, lineWidth: 2, lineColor: COLORS.accentBlue }],
-      alignment: "center",
-      margin: [0, 0, 0, 10],
+      canvas: [{ type: "line", x1: lineStart, y1: 0, x2: lineStart + 60, y2: 0, lineWidth: 2, lineColor: COLORS.accentBlue }],
+      margin: [0, 0, 0, 12],
     });
-    // Preview: 14px #64748b
     content.push({
       text: subtitle,
       fontSize: SIZES.subtitle,
       color: COLORS.subtitleGray,
       alignment: "center",
-      margin: [0, 0, 0, 6],
+      margin: [0, 0, 0, 8],
     });
-    // Preview: 12px #94a3b8
     content.push({
       text: formatDate(new Date().toISOString()),
       fontSize: SIZES.titleDate,
@@ -371,7 +431,6 @@ export async function POST(request: Request) {
     content.push({ text: "", pageBreak: "after" });
 
     // ---- TABLE OF CONTENTS ----
-    // Preview: 16px bold #1a365d, border-bottom 2px #2d5899
     content.push({
       text: "Table of Contents",
       fontSize: SIZES.tocHeading,
@@ -380,11 +439,11 @@ export async function POST(request: Request) {
       margin: [0, 0, 0, 3],
     });
     content.push({
-      canvas: [{ type: "line", x1: 0, y1: 0, x2: 475, y2: 0, lineWidth: 1.5, lineColor: COLORS.accentBlue }],
+      canvas: [{ type: "line", x1: 0, y1: 0, x2: CONTENT_WIDTH, y2: 0, lineWidth: 1.5, lineColor: COLORS.accentBlue }],
       margin: [0, 0, 0, 16],
     });
 
-    // TOC entries with hyperlinks to sections
+    // TOC entries with hyperlinks
     calls.forEach((call, i) => {
       let tocText = call.expert_name;
       if (call.position) tocText += ` - ${call.position}`;
@@ -411,9 +470,8 @@ export async function POST(request: Request) {
         margin: [0, 4, 0, 4],
       });
 
-      // Light bottom border between entries (preview: border-bottom 1px solid #eef1f5)
       content.push({
-        canvas: [{ type: "line", x1: 0, y1: 0, x2: 475, y2: 0, lineWidth: 0.3, lineColor: "#eef1f5" }],
+        canvas: [{ type: "line", x1: 0, y1: 0, x2: CONTENT_WIDTH, y2: 0, lineWidth: 0.3, lineColor: "#eef1f5" }],
         margin: [0, 0, 0, 0],
       });
     });
