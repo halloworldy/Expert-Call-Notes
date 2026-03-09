@@ -474,6 +474,10 @@ export default function ProjectDetailPage() {
   const [exportingDocx, setExportingDocx] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
 
+  // Delete call confirmation
+  const [deleteCallConfirm, setDeleteCallConfirm] = useState<string | null>(null);
+  const [deletingCall, setDeletingCall] = useState(false);
+
   // Drag
   const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
 
@@ -973,8 +977,17 @@ export default function ProjectDetailPage() {
 
   // ---- Delete call ----
   async function handleDeleteCall(callId: string) {
-    await supabase.from("expert_calls").delete().eq("id", callId);
-    loadCalls();
+    setDeletingCall(true);
+    try {
+      await supabase.from("expert_calls").delete().eq("id", callId);
+      setDeleteCallConfirm(null);
+      loadCalls();
+    } catch (err) {
+      console.error("Error deleting call:", err);
+      alert("Failed to delete call.");
+    } finally {
+      setDeletingCall(false);
+    }
   }
 
   // ---- Exports ----
@@ -2379,7 +2392,7 @@ export default function ProjectDetailPage() {
                         )}
 
                         <button
-                          onClick={() => handleDeleteCall(call.id)}
+                          onClick={() => setDeleteCallConfirm(call.id)}
                           className="px-3 py-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-md text-xs font-medium transition-colors ml-auto"
                         >
                           Delete
@@ -2474,6 +2487,49 @@ export default function ProjectDetailPage() {
         )}
         </>)}
       </main>
+
+      {/* Delete call confirmation modal */}
+      {deleteCallConfirm && (
+        <div
+          className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
+          onClick={() => !deletingCall && setDeleteCallConfirm(null)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl p-6 max-w-sm w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-base font-semibold text-slate-900 mb-2">
+              Delete Expert Call
+            </h3>
+            <p className="text-sm text-slate-600 mb-1">
+              Are you sure you want to delete the call with{" "}
+              <span className="font-medium">
+                {calls.find((c) => c.id === deleteCallConfirm)?.expert_name || "this expert"}
+              </span>
+              ?
+            </p>
+            <p className="text-xs text-slate-400 mb-5">
+              This will permanently delete the call notes, transcript, and formatted output. This action cannot be undone.
+            </p>
+            <div className="flex items-center gap-2 justify-end">
+              <button
+                onClick={() => setDeleteCallConfirm(null)}
+                disabled={deletingCall}
+                className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 text-sm font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDeleteCall(deleteCallConfirm)}
+                disabled={deletingCall}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 text-sm font-medium transition-colors"
+              >
+                {deletingCall ? "Deleting..." : "Delete Call"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
