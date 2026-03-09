@@ -16,6 +16,7 @@ function stripMarkdown(text: string): string {
     .replace(/\*{1,2}/g, "")
     .replace(/_{1,2}/g, "")
     .replace(/<\/?u>/g, "")
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, "")
     .trim();
 }
 
@@ -43,20 +44,23 @@ function formatTocDate(dateStr: string): string {
 type PdfContent = any;
 
 // Parse inline formatting markers (**bold**, _italic_, <u>underline</u>) into pdfmake text array
+// Note: inline images are stripped here; standalone image lines are handled separately
 function parseInlineFormattingPdf(
   text: string,
   baseStyle: { fontSize: number; color: string; bold?: boolean; italics?: boolean }
 ): PdfContent {
+  // Remove any inline image markers for text-only formatting
+  const cleanedText = text.replace(/!\[[^\]]*\]\([^)]+\)/g, "");
   const regex = /(\*\*(.+?)\*\*)|(_(.+?)_)|(<u>(.+?)<\/u>)/g;
   let lastIndex = 0;
   let match;
   const parts: PdfContent[] = [];
   let hasFormatting = false;
 
-  while ((match = regex.exec(text)) !== null) {
+  while ((match = regex.exec(cleanedText)) !== null) {
     hasFormatting = true;
     if (match.index > lastIndex) {
-      parts.push({ text: text.slice(lastIndex, match.index), ...baseStyle });
+      parts.push({ text: cleanedText.slice(lastIndex, match.index), ...baseStyle });
     }
     if (match[2]) {
       parts.push({ text: match[2], ...baseStyle, bold: true });
@@ -70,14 +74,23 @@ function parseInlineFormattingPdf(
 
   if (!hasFormatting) {
     // No formatting markers found — return clean text as simple string
-    return stripMarkdown(text);
+    return stripMarkdown(cleanedText);
   }
 
-  if (lastIndex < text.length) {
-    parts.push({ text: text.slice(lastIndex), ...baseStyle });
+  if (lastIndex < cleanedText.length) {
+    parts.push({ text: cleanedText.slice(lastIndex), ...baseStyle });
   }
 
   return parts;
+}
+
+// Create a pdfmake image node from a data URL
+function createPdfImage(dataUrl: string): PdfContent {
+  return {
+    image: dataUrl,
+    width: 400,
+    margin: [0, 6, 0, 6],
+  };
 }
 
 // Build a pdfmake text node with optional prefix and inline formatting
@@ -344,6 +357,12 @@ function buildCallContent(call: CallData, callIndex: number): PdfContent[] {
         content.push({ text: " ", fontSize: 4 });
         continue;
       }
+      // Standalone image line
+      const imageMatch = trimmed.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+      if (imageMatch && imageMatch[2].startsWith("data:")) {
+        content.push(createPdfImage(imageMatch[2]));
+        continue;
+      }
       const cleanText = stripMarkdown(trimmed);
       const isHeader = /^#{1,6}\s/.test(trimmed) || /^\d+\.\s/.test(trimmed);
       if (isHeader) {
@@ -361,6 +380,18 @@ function buildCallContent(call: CallData, callIndex: number): PdfContent[] {
           ...bodyStyle,
           margin: [0, 1, 0, 1],
         });
+      }
+    }
+  }
+
+  // Extract and render any standalone images from the formatted output
+  const imgRegex = /^!\[([^\]]*)\]\(([^)]+)\)$/gm;
+  let imgMatch;
+  while ((imgMatch = imgRegex.exec(call.formatted_output)) !== null) {
+    if (imgMatch[2].startsWith("data:")) {
+      // Only add if we used the structured parser (not fallback which already handles images)
+      if (background.length > 0 || sections.length > 0) {
+        content.push(createPdfImage(imgMatch[2]));
       }
     }
   }

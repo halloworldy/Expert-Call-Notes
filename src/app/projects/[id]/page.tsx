@@ -15,13 +15,13 @@ import type {
 import Link from "next/link";
 
 // ---- Inline formatting renderer ----
-// Parses **bold**, _italic_, and <u>underline</u> markers within text
+// Parses **bold**, _italic_, <u>underline</u>, and ![alt](src) image markers within text
 function renderInlineFormatting(text: string, key?: string): React.ReactNode {
   if (!text) return null;
 
   const parts: React.ReactNode[] = [];
-  // Pattern matches **bold**, _italic_, or <u>underline</u>
-  const regex = /(\*\*(.+?)\*\*)|(_(.+?)_)|(<u>(.+?)<\/u>)/g;
+  // Pattern matches **bold**, _italic_, <u>underline</u>, or ![alt](src)
+  const regex = /(\*\*(.+?)\*\*)|(_(.+?)_)|(<u>(.+?)<\/u>)|(!\[([^\]]*)\]\(([^)]+)\))/g;
   let lastIndex = 0;
   let match;
   let partKey = 0;
@@ -40,6 +40,18 @@ function renderInlineFormatting(text: string, key?: string): React.ReactNode {
     } else if (match[6]) {
       // <u>underline</u>
       parts.push(<u key={`${key}-u-${partKey++}`}>{match[6]}</u>);
+    } else if (match[9]) {
+      // ![alt](src)
+      // eslint-disable-next-line @next/next/no-img-element
+      parts.push(
+        <img
+          key={`${key}-img-${partKey++}`}
+          src={match[9]}
+          alt={match[8] || "image"}
+          className="inline-block max-w-full my-1 rounded"
+          style={{ maxHeight: 400 }}
+        />
+      );
     }
     lastIndex = match.index + match[0].length;
   }
@@ -50,12 +62,59 @@ function renderInlineFormatting(text: string, key?: string): React.ReactNode {
   return parts.length === 1 && typeof parts[0] === "string" ? parts[0] : <>{parts}</>;
 }
 
+// ---- Image helpers ----
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function insertImageAtCursor(
+  textareaRef: React.RefObject<HTMLTextAreaElement | null>,
+  value: string,
+  onChange: (newValue: string) => void,
+  dataUrl: string
+) {
+  const ta = textareaRef.current;
+  const pos = ta ? ta.selectionStart : value.length;
+  const imageMarkdown = `\n![image](${dataUrl})\n`;
+  const newValue = value.slice(0, pos) + imageMarkdown + value.slice(pos);
+  onChange(newValue);
+  if (ta) {
+    setTimeout(() => {
+      ta.focus();
+      const newPos = pos + imageMarkdown.length;
+      ta.setSelectionRange(newPos, newPos);
+    }, 0);
+  }
+}
+
+async function handleImageFiles(
+  files: FileList | File[],
+  textareaRef: React.RefObject<HTMLTextAreaElement | null>,
+  value: string,
+  onChange: (newValue: string) => void
+) {
+  for (const file of Array.from(files)) {
+    if (!file.type.startsWith("image/")) continue;
+    const dataUrl = await fileToBase64(file);
+    insertImageAtCursor(textareaRef, value, onChange, dataUrl);
+    // Update value reference for subsequent images
+    value = textareaRef.current?.value || value;
+  }
+}
+
 // ---- Formatting toolbar for textareas ----
 function FormattingToolbar({ textareaRef, value, onChange }: {
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
   value: string;
   onChange: (newValue: string) => void;
 }) {
+  const imageInputRef = useRef<HTMLInputElement>(null);
+
   function applyFormat(prefix: string, suffix: string) {
     const ta = textareaRef.current;
     if (!ta) return;
@@ -117,7 +176,88 @@ function FormattingToolbar({ textareaRef, value, onChange }: {
       >
         U
       </button>
-      <span className="text-[10px] text-slate-400 ml-1">Select text, then click to format</span>
+      <button
+        type="button"
+        onClick={() => imageInputRef.current?.click()}
+        className="px-2 py-0.5 text-xs border border-slate-300 rounded hover:bg-slate-100 transition-colors"
+        title="Insert image"
+      >
+        Img
+      </button>
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={async (e) => {
+          if (e.target.files && e.target.files.length > 0) {
+            await handleImageFiles(e.target.files, textareaRef, value, onChange);
+            e.target.value = "";
+          }
+        }}
+      />
+      <span className="text-[10px] text-slate-400 ml-1">Select text to format, or insert image</span>
+    </div>
+  );
+}
+
+// ---- Image-aware textarea: supports paste and drag/drop of images ----
+function ImageTextarea({
+  textareaRef,
+  value,
+  onChange,
+  ...props
+}: {
+  textareaRef: React.RefObject<HTMLTextAreaElement | null>;
+  value: string;
+  onChange: (newValue: string) => void;
+} & Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "onChange" | "ref">) {
+  const [dragOver, setDragOver] = useState(false);
+
+  return (
+    <div className="relative">
+      <textarea
+        ref={textareaRef}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onPaste={async (e) => {
+          const items = e.clipboardData?.items;
+          if (!items) return;
+          const imageFiles: File[] = [];
+          for (const item of Array.from(items)) {
+            if (item.type.startsWith("image/")) {
+              const file = item.getAsFile();
+              if (file) imageFiles.push(file);
+            }
+          }
+          if (imageFiles.length > 0) {
+            e.preventDefault();
+            await handleImageFiles(imageFiles, textareaRef, value, onChange);
+          }
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={async (e) => {
+          setDragOver(false);
+          const files = e.dataTransfer?.files;
+          if (!files) return;
+          const imageFiles = Array.from(files).filter((f) => f.type.startsWith("image/"));
+          if (imageFiles.length > 0) {
+            e.preventDefault();
+            await handleImageFiles(imageFiles, textareaRef, value, onChange);
+          }
+        }}
+        {...props}
+      />
+      {dragOver && (
+        <div className="absolute inset-0 border-2 border-dashed border-blue-400 bg-blue-50/50 rounded-lg flex items-center justify-center pointer-events-none">
+          <span className="text-sm text-blue-600 font-medium">Drop image here</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -134,8 +274,26 @@ function renderFormattedText(text: string) {
       elements.push(<div key={i} className="h-2" />);
       return;
     }
+
+    // Standalone image line: ![alt](src)
+    const imageMatch = line.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+    if (imageMatch) {
+      elements.push(
+        <div key={i} className="my-2">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={imageMatch[2]}
+            alt={imageMatch[1] || "image"}
+            className="max-w-full rounded"
+            style={{ maxHeight: 500 }}
+          />
+        </div>
+      );
+      return;
+    }
+
     // Strip markers only for pattern matching; render inline formatting for display
-    const clean = line.replace(/\*{1,2}/g, "").replace(/_{1,2}/g, "").replace(/<\/?u>/g, "");
+    const clean = line.replace(/\*{1,2}/g, "").replace(/_{1,2}/g, "").replace(/<\/?u>/g, "").replace(/!\[[^\]]*\]\([^)]+\)/g, "");
 
     // Section labels: Background, Summary
     if (clean.match(/^(Background|Summary)\s*$/i)) {
@@ -1842,10 +2000,10 @@ export default function ProjectDetailPage() {
                   onChange={setManualFormattedNotes}
                 />
                 <div className={showManualPreview ? "grid grid-cols-2 gap-3" : ""}>
-                  <textarea
-                    ref={manualTextareaRef}
+                  <ImageTextarea
+                    textareaRef={manualTextareaRef}
                     value={manualFormattedNotes}
-                    onChange={(e) => setManualFormattedNotes(e.target.value)}
+                    onChange={setManualFormattedNotes}
                     required
                     rows={15}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs input-font"
@@ -2105,13 +2263,13 @@ export default function ProjectDetailPage() {
                             }
                           />
                           <div className={showEditPreview ? "grid grid-cols-2 gap-3" : ""}>
-                            <textarea
-                              ref={editTextareaRef}
+                            <ImageTextarea
+                              textareaRef={editTextareaRef}
                               value={editForm.formatted_output}
-                              onChange={(e) =>
+                              onChange={(val) =>
                                 setEditForm({
                                   ...editForm,
-                                  formatted_output: e.target.value,
+                                  formatted_output: val,
                                 })
                               }
                               rows={25}
@@ -2289,10 +2447,10 @@ export default function ProjectDetailPage() {
                                   onChange={setViewEditText}
                                 />
                                 <div className="grid grid-cols-2 gap-3">
-                                  <textarea
-                                    ref={viewEditTextareaRef}
+                                  <ImageTextarea
+                                    textareaRef={viewEditTextareaRef}
                                     value={viewEditText}
-                                    onChange={(e) => setViewEditText(e.target.value)}
+                                    onChange={setViewEditText}
                                     rows={25}
                                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs input-font bg-white"
                                   />

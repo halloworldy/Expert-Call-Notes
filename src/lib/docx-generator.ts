@@ -3,6 +3,7 @@ import {
   Packer,
   Paragraph,
   TextRun,
+  ImageRun,
   HeadingLevel,
   AlignmentType,
   TableOfContents,
@@ -35,16 +36,48 @@ interface BackgroundBullet {
 }
 
 function stripMarkdown(text: string): string {
-  return text.replace(/\*{1,2}/g, "").replace(/_{1,2}/g, "").replace(/<\/?u>/g, "").trim();
+  return text.replace(/\*{1,2}/g, "").replace(/_{1,2}/g, "").replace(/<\/?u>/g, "").replace(/!\[[^\]]*\]\([^)]+\)/g, "").trim();
 }
 
-// Parse inline formatting markers and return TextRun elements
+// Parse a data URL to a Uint8Array buffer
+function dataUrlToBuffer(dataUrl: string): Uint8Array {
+  const base64 = dataUrl.split(",")[1];
+  if (!base64) return new Uint8Array(0);
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+// Create a Paragraph containing an image from a data URL
+function createImageParagraph(dataUrl: string): Paragraph {
+  const buffer = dataUrlToBuffer(dataUrl);
+  // Default dimensions - docx ImageRun requires explicit dimensions
+  // Use reasonable defaults that fit within page margins (6 inches = 432pt wide)
+  const maxWidth = 500;
+  const maxHeight = 400;
+
+  return new Paragraph({
+    spacing: { before: 80, after: 80 },
+    children: [
+      new ImageRun({
+        data: buffer,
+        transformation: { width: maxWidth, height: maxHeight },
+        type: "png",
+      }),
+    ],
+  });
+}
+
+// Parse inline formatting markers and return TextRun/ImageRun elements
 function parseInlineFormatting(
   text: string,
   baseOptions: { size: number; font: string; color: string; bold?: boolean; italics?: boolean }
-): TextRun[] {
-  const runs: TextRun[] = [];
-  const regex = /(\*\*(.+?)\*\*)|(_(.+?)_)|(<u>(.+?)<\/u>)/g;
+): (TextRun | ImageRun)[] {
+  const runs: (TextRun | ImageRun)[] = [];
+  const regex = /(\*\*(.+?)\*\*)|(_(.+?)_)|(<u>(.+?)<\/u>)|(!\[([^\]]*)\]\(([^)]+)\))/g;
   let lastIndex = 0;
   let match;
 
@@ -58,6 +91,16 @@ function parseInlineFormatting(
       runs.push(new TextRun({ text: match[4], ...baseOptions, italics: true }));
     } else if (match[6]) {
       runs.push(new TextRun({ text: match[6], ...baseOptions, underline: { type: "single" } }));
+    } else if (match[9]) {
+      // Inline image
+      const buffer = dataUrlToBuffer(match[9]);
+      if (buffer.length > 0) {
+        runs.push(new ImageRun({
+          data: buffer,
+          transformation: { width: 500, height: 400 },
+          type: "png",
+        }));
+      }
     }
     lastIndex = match.index + match[0].length;
   }
@@ -251,11 +294,19 @@ function renderFallbackParagraphs(text: string): Paragraph[] {
       continue;
     }
 
+    // Standalone image line
+    const imageMatch = trimmed.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+    if (imageMatch && imageMatch[2].startsWith("data:")) {
+      paragraphs.push(createImageParagraph(imageMatch[2]));
+      continue;
+    }
+
     const cleanText = trimmed
       .replace(/^#{1,6}\s+/, "")
       .replace(/\*\*(.+?)\*\*/g, "$1")
       .replace(/\*(.+?)\*/g, "$1")
-      .replace(/^[-*]\s+/, "");
+      .replace(/^[-*]\s+/, "")
+      .replace(/!\[[^\]]*\]\([^)]+\)/g, "");
 
     const isHeader = /^#{1,6}\s/.test(trimmed) || /^\d+\.\s/.test(trimmed);
 
@@ -556,6 +607,15 @@ export async function generateDocx(
       const fallback = renderFallbackParagraphs(call.formatted_output!);
       for (const p of fallback) {
         children.push(p);
+      }
+    }
+
+    // Extract and render any standalone images from the formatted output
+    const imgRegex = /^!\[([^\]]*)\]\(([^)]+)\)$/gm;
+    let imgMatch;
+    while ((imgMatch = imgRegex.exec(call.formatted_output!)) !== null) {
+      if (imgMatch[2].startsWith("data:")) {
+        children.push(createImageParagraph(imgMatch[2]));
       }
     }
   });

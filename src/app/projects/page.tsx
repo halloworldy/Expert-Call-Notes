@@ -11,6 +11,8 @@ export default function ProjectsPage() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // Editable app name
   const [appName, setAppName] = useState("Tech Team - Notes Library");
@@ -66,6 +68,20 @@ export default function ProjectsPage() {
       .update({ is_pinned: !currentlyPinned })
       .eq("id", projectId);
     if (!error) loadProjects();
+  }
+
+  async function deleteProject(e: React.MouseEvent, projectId: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDeleting(true);
+    // Delete related data first, then the project
+    await supabase.from("expert_calls").delete().eq("project_id", projectId);
+    await supabase.from("section_dividers").delete().eq("project_id", projectId);
+    await supabase.from("tracker_files").delete().eq("project_id", projectId);
+    await supabase.from("projects").delete().eq("id", projectId);
+    setDeleteConfirm(null);
+    setDeleting(false);
+    loadProjects();
   }
 
   function startEditingAppName() {
@@ -232,6 +248,16 @@ export default function ProjectsPage() {
                     >
                       {project.is_pinned ? "Unpin" : "Pin"}
                     </button>
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setDeleteConfirm(project.id);
+                      }}
+                      className="text-xs font-medium px-2.5 py-1 rounded transition-colors text-red-400 hover:bg-red-50 hover:text-red-600 opacity-0 group-hover:opacity-100"
+                    >
+                      Delete
+                    </button>
                     <span className="text-xs text-slate-400">
                       Updated {formatDate(project.updated_at)}
                     </span>
@@ -245,6 +271,49 @@ export default function ProjectsPage() {
           </div>
         )}
       </main>
+
+      {/* Delete confirmation modal */}
+      {deleteConfirm && (
+        <div
+          className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
+          onClick={() => !deleting && setDeleteConfirm(null)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl p-6 max-w-sm w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-base font-semibold text-slate-900 mb-2">
+              Delete Project
+            </h3>
+            <p className="text-sm text-slate-600 mb-1">
+              Are you sure you want to delete{" "}
+              <span className="font-medium">
+                {projects.find((p) => p.id === deleteConfirm)?.name}
+              </span>
+              ?
+            </p>
+            <p className="text-xs text-slate-400 mb-5">
+              This will permanently delete all expert calls, dividers, and tracker data associated with this project. This action cannot be undone.
+            </p>
+            <div className="flex items-center gap-2 justify-end">
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                disabled={deleting}
+                className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 text-sm font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={(e) => deleteProject(e, deleteConfirm)}
+                disabled={deleting}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 text-sm font-medium transition-colors"
+              >
+                {deleting ? "Deleting..." : "Delete Project"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
