@@ -42,6 +42,20 @@ function formatTocDate(dateStr: string): string {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type PdfContent = any;
 
+// Check if a line is a standalone image marker
+function isImageLine(line: string): boolean {
+  return /^!\[image\]\([^)]+\)$/.test(line.trim());
+}
+
+// Create a pdfmake image node from a base64 data URI
+function createPdfImage(dataUri: string, margin?: number[]): PdfContent {
+  return {
+    image: dataUri,
+    width: 400,
+    margin: margin || [0, 4, 0, 4],
+  };
+}
+
 // Parse inline formatting markers (**bold**, _italic_, <u>underline</u>) into pdfmake text array
 function parseInlineFormattingPdf(
   text: string,
@@ -126,6 +140,10 @@ function parseFormattedOutput(text: string): {
     if (!line.trim()) continue;
 
     const trimmedLine = line.trim(); // preserves formatting markers
+
+    // Skip standalone image lines — handled separately during rendering
+    if (isImageLine(trimmedLine)) continue;
+
     const cleanLine = stripMarkdown(line);
 
     if (cleanLine.match(/^Background\s*$/i)) {
@@ -344,6 +362,12 @@ function buildCallContent(call: CallData, callIndex: number): PdfContent[] {
         content.push({ text: " ", fontSize: 4 });
         continue;
       }
+      // Handle image lines in fallback
+      const imgMatch = trimmed.match(/^!\[image\]\(([^)]+)\)$/);
+      if (imgMatch) {
+        content.push(createPdfImage(imgMatch[1]));
+        continue;
+      }
       const cleanText = stripMarkdown(trimmed);
       const isHeader = /^#{1,6}\s/.test(trimmed) || /^\d+\.\s/.test(trimmed);
       if (isHeader) {
@@ -362,6 +386,16 @@ function buildCallContent(call: CallData, callIndex: number): PdfContent[] {
           margin: [0, 1, 0, 1],
         });
       }
+    }
+  }
+
+  // Render standalone image lines from the formatted output
+  const outputLines = call.formatted_output.split("\n");
+  for (const outputLine of outputLines) {
+    const trimmed = outputLine.trim();
+    const imgMatch = trimmed.match(/^!\[image\]\(([^)]+)\)$/);
+    if (imgMatch) {
+      content.push(createPdfImage(imgMatch[1]));
     }
   }
 

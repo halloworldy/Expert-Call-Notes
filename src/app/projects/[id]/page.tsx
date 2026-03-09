@@ -15,13 +15,13 @@ import type {
 import Link from "next/link";
 
 // ---- Inline formatting renderer ----
-// Parses **bold**, _italic_, and <u>underline</u> markers within text
+// Parses **bold**, _italic_, <u>underline</u>, and ![image](dataUri) markers within text
 function renderInlineFormatting(text: string, key?: string): React.ReactNode {
   if (!text) return null;
 
   const parts: React.ReactNode[] = [];
-  // Pattern matches **bold**, _italic_, or <u>underline</u>
-  const regex = /(\*\*(.+?)\*\*)|(_(.+?)_)|(<u>(.+?)<\/u>)/g;
+  // Pattern matches **bold**, _italic_, <u>underline</u>, or ![image](data:...)
+  const regex = /(\*\*(.+?)\*\*)|(_(.+?)_)|(<u>(.+?)<\/u>)|(!\[image\]\(([^)]+)\))/g;
   let lastIndex = 0;
   let match;
   let partKey = 0;
@@ -40,6 +40,10 @@ function renderInlineFormatting(text: string, key?: string): React.ReactNode {
     } else if (match[6]) {
       // <u>underline</u>
       parts.push(<u key={`${key}-u-${partKey++}`}>{match[6]}</u>);
+    } else if (match[8]) {
+      // ![image](dataUri)
+      // eslint-disable-next-line @next/next/no-img-element
+      parts.push(<img key={`${key}-img-${partKey++}`} src={match[8]} alt="embedded" style={{ maxWidth: "100%", borderRadius: 4, margin: "4px 0" }} />);
     }
     lastIndex = match.index + match[0].length;
   }
@@ -50,12 +54,43 @@ function renderInlineFormatting(text: string, key?: string): React.ReactNode {
   return parts.length === 1 && typeof parts[0] === "string" ? parts[0] : <>{parts}</>;
 }
 
+// ---- Helper: convert a File (image) to a base64 data URI, resizing if needed ----
+function fileToBase64(file: File, maxWidth = 800): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        // Resize if too wide
+        let w = img.width;
+        let h = img.height;
+        if (w > maxWidth) {
+          h = Math.round(h * (maxWidth / w));
+          w = maxWidth;
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d")!;
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/png"));
+      };
+      img.onerror = reject;
+      img.src = reader.result as string;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 // ---- Formatting toolbar for textareas ----
 function FormattingToolbar({ textareaRef, value, onChange }: {
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
   value: string;
   onChange: (newValue: string) => void;
 }) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   function applyFormat(prefix: string, suffix: string) {
     const ta = textareaRef.current;
     if (!ta) return;
@@ -91,6 +126,69 @@ function FormattingToolbar({ textareaRef, value, onChange }: {
     }, 0);
   }
 
+  async function insertImage(file: File) {
+    if (!file.type.startsWith("image/")) return;
+    try {
+      const dataUri = await fileToBase64(file);
+      const marker = `\n![image](${dataUri})\n`;
+      const ta = textareaRef.current;
+      const pos = ta ? ta.selectionStart : value.length;
+      const newValue = value.slice(0, pos) + marker + value.slice(pos);
+      onChange(newValue);
+    } catch (err) {
+      console.error("Failed to insert image:", err);
+    }
+  }
+
+  function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) insertImage(file);
+    e.target.value = "";
+  }
+
+  // Handle paste events on the textarea to capture images
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    function handlePaste(e: ClipboardEvent) {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of Array.from(items)) {
+        if (item.type.startsWith("image/")) {
+          e.preventDefault();
+          const file = item.getAsFile();
+          if (file) insertImage(file);
+          return;
+        }
+      }
+    }
+    function handleDrop(e: globalThis.DragEvent) {
+      const files = e.dataTransfer?.files;
+      if (!files) return;
+      for (const file of Array.from(files)) {
+        if (file.type.startsWith("image/")) {
+          e.preventDefault();
+          insertImage(file);
+          return;
+        }
+      }
+    }
+    function handleDragOver(e: globalThis.DragEvent) {
+      if (e.dataTransfer?.types.includes("Files")) {
+        e.preventDefault();
+      }
+    }
+    ta.addEventListener("paste", handlePaste);
+    ta.addEventListener("drop", handleDrop);
+    ta.addEventListener("dragover", handleDragOver);
+    return () => {
+      ta.removeEventListener("paste", handlePaste);
+      ta.removeEventListener("drop", handleDrop);
+      ta.removeEventListener("dragover", handleDragOver);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
   return (
     <div className="flex items-center gap-1 mb-1">
       <button
@@ -117,7 +215,22 @@ function FormattingToolbar({ textareaRef, value, onChange }: {
       >
         U
       </button>
-      <span className="text-[10px] text-slate-400 ml-1">Select text, then click to format</span>
+      <button
+        type="button"
+        onClick={() => fileInputRef.current?.click()}
+        className="px-2 py-0.5 text-xs border border-slate-300 rounded hover:bg-slate-100 transition-colors"
+        title="Insert image (file, paste, or drag & drop)"
+      >
+        🖼
+      </button>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleFileInput}
+        className="hidden"
+      />
+      <span className="text-[10px] text-slate-400 ml-1">Select text to format · Paste/drop images</span>
     </div>
   );
 }
@@ -134,6 +247,14 @@ function renderFormattedText(text: string) {
       elements.push(<div key={i} className="h-2" />);
       return;
     }
+    // Standalone image line
+    const imgMatch = line.match(/^!\[image\]\(([^)]+)\)$/);
+    if (imgMatch) {
+      // eslint-disable-next-line @next/next/no-img-element
+      elements.push(<div key={i} className="my-2"><img src={imgMatch[1]} alt="embedded" style={{ maxWidth: "100%", borderRadius: 4 }} /></div>);
+      return;
+    }
+
     // Strip markers only for pattern matching; render inline formatting for display
     const clean = line.replace(/\*{1,2}/g, "").replace(/_{1,2}/g, "").replace(/<\/?u>/g, "");
 

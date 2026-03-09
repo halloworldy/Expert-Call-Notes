@@ -3,6 +3,7 @@ import {
   Packer,
   Paragraph,
   TextRun,
+  ImageRun,
   HeadingLevel,
   AlignmentType,
   TableOfContents,
@@ -38,13 +39,38 @@ function stripMarkdown(text: string): string {
   return text.replace(/\*{1,2}/g, "").replace(/_{1,2}/g, "").replace(/<\/?u>/g, "").trim();
 }
 
-// Parse inline formatting markers and return TextRun elements
+// Decode a base64 data URI to a Buffer
+function dataUriToBuffer(dataUri: string): Buffer {
+  const base64 = dataUri.split(",")[1] || "";
+  return Buffer.from(base64, "base64");
+}
+
+// Get image dimensions from a PNG/JPEG buffer (rough extraction)
+function getImageDimensions(buf: Buffer): { width: number; height: number } {
+  // PNG: bytes 16-23 contain width (4 bytes) and height (4 bytes)
+  if (buf[0] === 0x89 && buf[1] === 0x50) {
+    const width = buf.readUInt32BE(16);
+    const height = buf.readUInt32BE(24);
+    return { width, height };
+  }
+  // JPEG: search for SOF0 marker (0xFF 0xC0)
+  for (let i = 0; i < buf.length - 9; i++) {
+    if (buf[i] === 0xff && (buf[i + 1] === 0xc0 || buf[i + 1] === 0xc2)) {
+      const height = buf.readUInt16BE(i + 5);
+      const width = buf.readUInt16BE(i + 7);
+      return { width, height };
+    }
+  }
+  return { width: 400, height: 300 }; // fallback
+}
+
+// Parse inline formatting markers and return TextRun/ImageRun elements
 function parseInlineFormatting(
   text: string,
   baseOptions: { size: number; font: string; color: string; bold?: boolean; italics?: boolean }
-): TextRun[] {
-  const runs: TextRun[] = [];
-  const regex = /(\*\*(.+?)\*\*)|(_(.+?)_)|(<u>(.+?)<\/u>)/g;
+): (TextRun | ImageRun)[] {
+  const runs: (TextRun | ImageRun)[] = [];
+  const regex = /(\*\*(.+?)\*\*)|(_(.+?)_)|(<u>(.+?)<\/u>)|(!\[image\]\(([^)]+)\))/g;
   let lastIndex = 0;
   let match;
 
@@ -58,6 +84,24 @@ function parseInlineFormatting(
       runs.push(new TextRun({ text: match[4], ...baseOptions, italics: true }));
     } else if (match[6]) {
       runs.push(new TextRun({ text: match[6], ...baseOptions, underline: { type: "single" } }));
+    } else if (match[8]) {
+      // Embedded image
+      try {
+        const buf = dataUriToBuffer(match[8]);
+        const dim = getImageDimensions(buf);
+        const maxW = 500; // max width in points ≈ ~6.9 inches
+        const scale = dim.width > maxW ? maxW / dim.width : 1;
+        runs.push(new ImageRun({
+          data: buf,
+          transformation: {
+            width: Math.round(dim.width * scale),
+            height: Math.round(dim.height * scale),
+          },
+          type: "png",
+        }));
+      } catch {
+        runs.push(new TextRun({ text: "[image]", ...baseOptions }));
+      }
     }
     lastIndex = match.index + match[0].length;
   }
@@ -67,6 +111,38 @@ function parseInlineFormatting(
   }
 
   return runs.length > 0 ? runs : [new TextRun({ text, ...baseOptions })];
+}
+
+// Check if a line is a standalone image marker
+function isImageLine(line: string): boolean {
+  return /^!\[image\]\([^)]+\)$/.test(line.trim());
+}
+
+// Create a Paragraph containing an embedded image from a data URI
+function createImageParagraph(dataUri: string): Paragraph {
+  try {
+    const buf = dataUriToBuffer(dataUri);
+    const dim = getImageDimensions(buf);
+    const maxW = 500;
+    const scale = dim.width > maxW ? maxW / dim.width : 1;
+    return new Paragraph({
+      spacing: { before: 80, after: 80 },
+      children: [
+        new ImageRun({
+          data: buf,
+          transformation: {
+            width: Math.round(dim.width * scale),
+            height: Math.round(dim.height * scale),
+          },
+          type: "png",
+        }),
+      ],
+    });
+  } catch {
+    return new Paragraph({
+      children: [new TextRun({ text: "[image]", size: 21, font: "Segoe UI", color: "000000" })],
+    });
+  }
 }
 
 function parseFormattedOutput(text: string): {
@@ -88,6 +164,10 @@ function parseFormattedOutput(text: string): {
     if (!line.trim()) continue;
 
     const trimmedLine = line.trim(); // preserves formatting markers
+
+    // Skip standalone image lines — handled separately during rendering
+    if (isImageLine(trimmedLine)) continue;
+
     const cleanLine = stripMarkdown(line);
 
     // Detect section headers
@@ -556,6 +636,16 @@ export async function generateDocx(
       const fallback = renderFallbackParagraphs(call.formatted_output!);
       for (const p of fallback) {
         children.push(p);
+      }
+    }
+
+    // Render any standalone image lines from the formatted output
+    const outputLines = call.formatted_output!.split("\n");
+    for (const outputLine of outputLines) {
+      const trimmed = outputLine.trim();
+      const imgMatch = trimmed.match(/^!\[image\]\(([^)]+)\)$/);
+      if (imgMatch) {
+        children.push(createImageParagraph(imgMatch[1]));
       }
     }
   });
