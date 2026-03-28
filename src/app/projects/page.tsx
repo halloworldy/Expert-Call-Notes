@@ -13,6 +13,11 @@ export default function ProjectsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
+  // Telegram settings
+  const [showTelegramSettings, setShowTelegramSettings] = useState(false);
+  const [telegramStatus, setTelegramStatus] = useState<string | null>(null);
+  const [telegramLoading, setTelegramLoading] = useState(false);
+
   // Editable app name
   const [appName, setAppName] = useState("Tech Team - Notes Library");
   const [editingAppName, setEditingAppName] = useState(false);
@@ -93,6 +98,44 @@ export default function ProjectsPage() {
     setEditingAppName(false);
   }
 
+  async function setupTelegramWebhook() {
+    setTelegramLoading(true);
+    setTelegramStatus(null);
+    try {
+      const webhookUrl = `${window.location.origin}/api/telegram/webhook`;
+      const res = await fetch("/api/telegram/setup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ webhookUrl }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setTelegramStatus(`Webhook registered at ${webhookUrl}`);
+      } else {
+        setTelegramStatus(`Error: ${data.error}`);
+      }
+    } catch {
+      setTelegramStatus("Failed to connect to setup endpoint");
+    }
+    setTelegramLoading(false);
+  }
+
+  async function checkTelegramStatus() {
+    setTelegramLoading(true);
+    try {
+      const res = await fetch("/api/telegram/setup");
+      const data = await res.json();
+      if (data.result?.url) {
+        setTelegramStatus(`Active webhook: ${data.result.url}`);
+      } else {
+        setTelegramStatus("No webhook configured");
+      }
+    } catch {
+      setTelegramStatus("Could not check status");
+    }
+    setTelegramLoading(false);
+  }
+
   function formatDate(dateStr: string) {
     return new Date(dateStr).toLocaleDateString("en-US", {
       month: "short",
@@ -156,8 +199,60 @@ export default function ProjectsPage() {
               {appName}
             </h1>
           )}
+          <button
+            onClick={() => setShowTelegramSettings(!showTelegramSettings)}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+              showTelegramSettings
+                ? "bg-blue-600 text-white"
+                : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+            }`}
+          >
+            Telegram Bot
+          </button>
         </div>
       </header>
+
+      {showTelegramSettings && (
+        <div className="bg-slate-100 border-b border-slate-200">
+          <div className="max-w-5xl mx-auto px-6 py-4">
+            <div className="bg-white rounded-lg border border-slate-200 p-5">
+              <h3 className="text-sm font-semibold text-slate-900 mb-3">Telegram Bot Integration</h3>
+              <p className="text-xs text-slate-500 mb-4">
+                Send raw call notes to a Telegram bot and receive formatted results. Set the <code className="bg-slate-100 px-1 py-0.5 rounded text-xs">TELEGRAM_BOT_TOKEN</code> env variable, then register the webhook below.
+              </p>
+              <div className="flex items-center gap-3 mb-3">
+                <button
+                  onClick={setupTelegramWebhook}
+                  disabled={telegramLoading}
+                  className="px-4 py-2 text-xs font-medium bg-blue-700 text-white rounded-lg hover:bg-blue-800 disabled:opacity-50 transition-colors"
+                >
+                  {telegramLoading ? "Working..." : "Register Webhook"}
+                </button>
+                <button
+                  onClick={checkTelegramStatus}
+                  disabled={telegramLoading}
+                  className="px-4 py-2 text-xs font-medium bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 disabled:opacity-50 transition-colors"
+                >
+                  Check Status
+                </button>
+              </div>
+              {telegramStatus && (
+                <p className={`text-xs ${telegramStatus.startsWith("Error") || telegramStatus.startsWith("Failed") || telegramStatus.startsWith("Could not") ? "text-red-600" : "text-green-700"}`}>
+                  {telegramStatus}
+                </p>
+              )}
+              <div className="mt-4 pt-3 border-t border-slate-100">
+                <p className="text-xs text-slate-500">
+                  <strong>Bot commands:</strong> /start, /projects (select a project), /selected (show current project), /help
+                </p>
+                <p className="text-xs text-slate-500 mt-1">
+                  <strong>Usage:</strong> Select a project, then send raw notes. Prefix with &quot;Expert: Name&quot; on the first line to set the expert name.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <main className="max-w-5xl mx-auto px-6 py-8">
         <div className="flex items-center justify-between mb-6">
